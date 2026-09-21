@@ -136,12 +136,12 @@ def main() -> None:
 
     # 12-14. single-source combinations
     _write("bank_only.csv", _bank_rows([5000.0 + i * 13 for i in range(400)]))
-    cdr = [{"call_time": f"2025-0{d % 6 + 1}-{(d % 27) + 1:02d} 2{d % 9}:{(d * 3) % 60:02d}:00",
+    cdr = [{"call_time": f"2025-0{d % 6 + 1}-{(d % 27) + 1:02d} 2{d % 4}:{(d * 3) % 60:02d}:00",
             "msisdn": f"6391{i % 10:08d}", "terminating_number": f"6399{i % 9:08d}",
             "duration_secs": str(10.0 + d % 60), "tower": f"T{d % 12}"}
            for i, d in enumerate(range(400))]
     _write("cdr_only.csv", cdr)
-    soc = [{"created_utc": f"2025-0{d % 6 + 1}-{(d % 27) + 1:02d} 3{d % 9}:00:00",
+    soc = [{"created_utc": f"2025-0{d % 6 + 1}-{(d % 27) + 1:02d} 1{d % 4}:00:00",
             "username": f"@user.{i % 10:03d}", "hashtags": f"#{d % 7}",
             "full_name": f"Name {d % 9}"} for i, d in enumerate(range(400))]
     _write("social_only.csv", soc)

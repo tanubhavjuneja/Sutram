@@ -1078,6 +1078,8 @@ def fit_chain(df: pd.DataFrame, min_hops: int = 3, hop_days: float = 7.0,
     def dfs(node: str, ts: pd.Timestamp, path: List[str], amts: List[float]):
         extended = False
         for dst, nxt_ts, amt_ in out_edges.get(node, ()):
+            if dst in path:
+                continue
             if abs((nxt_ts - ts).total_seconds()) <= hop.total_seconds():
                 dfs(dst, nxt_ts, path + [dst], amts + [amt_])
                 extended = True
@@ -1086,7 +1088,8 @@ def fit_chain(df: pd.DataFrame, min_hops: int = 3, hop_days: float = 7.0,
 
     for src in list(out_edges):
         for dst, nxt_ts, amt_ in out_edges[src]:
-            dfs(dst, nxt_ts, [src, dst], [amt_])
+            if dst != src:
+                dfs(dst, nxt_ts, [src, dst], [amt_])
     if not chains:
         return {}
 
