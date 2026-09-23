@@ -1,4 +1,4 @@
-﻿"""TraceWeave — PySide6 desktop analyst.
+﻿"""Sutram — PySide6 desktop analyst.
 
 A drag-and-drop window for financial / comms source files (bank CSV,
 CDR, social, JSON, JSONL, prose logs…). Press **Analyze** and every
@@ -47,188 +47,163 @@ from PySide6.QtWidgets import (
 )
 
 # ---------------------------------------------------------------------------
-# theme — green & white with crisp hover / pressed feedback on every button
+# theme — Sutram terminal console: flat obsidian panels, amber semantic
+# accents, hard 1px borders, zero ornament. Matches report.html.
 # ---------------------------------------------------------------------------
-MINT = "#2fae8f"            # primary
-MINT_HOVER = "#3fc9a2"
-MINT_PRESSED = "#229a79"
-MINT_DARK = "#1e7f63"
-SKY = "#5aa7e8"
-TEAL = "#35c7c2"
-AMBER = "#e0a03d"
-RED = "#e0566b"
-RED_HOVER = "#fde7ec"
-RED_PRESSED = "#f9d8de"
-INK = "#16342a"
-MUTED = "#6f8d82"
-BORDER = "#d9e8e0"
-HINT = "#8fa89f"
+MINT = "#FFB000"            # primary amber
+MINT_HOVER = "#FFC933"
+MINT_PRESSED = "#D69500"
+MINT_DARK = "#8A6200"
+SKY = "#38BDF8"
+TEAL = "#34D399"
+AMBER = "#FDE047"
+RED = "#F87171"
+RED_HOVER = "#450A0A"
+RED_PRESSED = "#7F1D1D"
+INK = "#F8FAFC"
+MUTED = "#94A3B8"
+BORDER = "#334155"
+HINT = "#64748B"
 
 QSS = """
-* { font-family: 'Segoe UI', Helvetica, Arial, sans-serif; outline: none; }
+* { font-family: ui-monospace, 'IBM Plex Mono', SFMono-Regular, Menlo, Consolas, monospace; outline: none; }
 
 QWidget#Root {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #f9fdfb, stop:0.5 #f0f9f4, stop:1 #e6f3ec);
+    background: #020617;
 }
-QLabel { color: #16342a; background: transparent; }
-QToolTip { background: #16342a; color: #fff; border: none; padding: 4px 8px; }
+QLabel { color: #F8FAFC; background: transparent; }
+QToolTip { background: #1E293B; color: #F8FAFC; border: 1px solid #334155; padding: 4px 8px; }
 
 QScrollArea { background: transparent; border: none; }
 QScrollArea > QWidget > QWidget { background: transparent; }
-QScrollBar:vertical { background: rgba(46,175,143,20); width: 8px; border-radius: 4px; }
-QScrollBar::handle:vertical { background: rgba(46,175,143,90); border-radius: 4px; }
+QScrollBar:vertical { background: #0F172A; width: 8px; border-radius: 0; }
+QScrollBar::handle:vertical { background: #334155; border-radius: 0; min-height: 24px; }
+QScrollBar::handle:vertical:hover { background: #FFB000; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
 
 #LogoMark {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #4fd0a2, stop:1 #35a885);
-    color: white; border-radius: 22px;
-    font-size: 21px; font-weight: 900; letter-spacing: 1px;
+    background: #020617;
+    color: #FFB000; border-radius: 0;
+    border: 1px solid #FFB000;
+    font-size: 15px; font-weight: 800; letter-spacing: 1px;
+    padding: 4px 10px;
 }
-#AppTitle { font-size: 26px; font-weight: 800; letter-spacing: 0.3px; color: #16342a; }
-#AppTag   { font-size: 12px; color: #6d8d82; font-weight: 600; }
+#AppTitle { font-size: 19px; font-weight: 800; letter-spacing: 1px; color: #F8FAFC; }
+#AppTag   { font-size: 11px; color: #64748B; letter-spacing: 1.2px; }
 
 #GlassPanel {
-    background: rgba(255, 255, 255, 0.62);
-    border: 1px solid rgba(217, 232, 224, 0.9);
-    border-radius: 22px;
+    background: #0F172A;
+    border: 1px solid #334155;
+    border-radius: 0;
 }
 #GlassPanelStrong {
-    background: rgba(255, 255, 255, 0.82);
-    border: 1px solid rgba(47, 174, 143, 0.28);
-    border-radius: 22px;
+    background: #0F172A;
+    border: 1px solid #334155;
+    border-radius: 0;
 }
 
-#SectionTitle { font-size: 15px; font-weight: 800; color: #173b2e; }
-#SectionSub   { font-size: 12px; color: #6d8d82; }
+#SectionTitle { font-size: 12px; font-weight: 700; color: #F8FAFC; letter-spacing: 1.2px; }
+#SectionSub   { font-size: 11px; color: #64748B; letter-spacing: 0.4px; }
 
 #Badge {
-    background: #e6f6ee; color: #1e7f63; border: 1px solid #bfe5d3;
-    border-radius: 11px; font-weight: 800; font-size: 11px;
-    padding: 3px 11px;
+    background: transparent; color: #FFB000; border: 1px solid #FFB000;
+    border-radius: 0; font-weight: 700; font-size: 10px; letter-spacing: 1px;
+    padding: 2px 9px;
 }
 
-/* ---------------- buttons: every state (base / hover / pressed) ---------- */
 QPushButton {
-    border: none; border-radius: 13px; font-weight: 700; font-size: 13px;
-    padding: 9px 20px; color: #16342a; background: transparent;
+    border: 1px solid #334155; border-radius: 0; font-weight: 700; font-size: 12px;
+    letter-spacing: 0.8px; padding: 8px 18px; color: #94A3B8; background: transparent;
 }
 QPushButton:focus { outline: none; }
+QPushButton:hover { color: #F8FAFC; border-color: #64748B; }
 
 QPushButton#PrimaryBtn {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-              stop:0 #41c89b, stop:1 #29a57e);
-    color: white; font-weight: 800;
-    border: 1px solid rgba(255,255,255,0.25);
+    background: #FFB000; color: #020617; font-weight: 800; border-color: #FFB000;
 }
-QPushButton#PrimaryBtn:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-              stop:0 #52dcae, stop:1 #34b78c); }
-QPushButton#PrimaryBtn:pressed { background: #229a74; }
-QPushButton#PrimaryBtn:disabled { background: #cfe7dc; color: #f4faf7; }
+QPushButton#PrimaryBtn:hover { background: #FFC933; }
+QPushButton#PrimaryBtn:pressed { background: #D69500; }
+QPushButton#PrimaryBtn:disabled { background: #1E293B; color: #475569; border-color: #334155; }
 
 QPushButton#GhostBtn {
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid #d7e8df; color: #1e5a44;
+    background: transparent; border-color: #334155; color: #94A3B8;
 }
-QPushButton#GhostBtn:hover {
-    background: #ffffff; border-color: #2fae8f;
-}
-QPushButton#GhostBtn:pressed {
-    background: #e3f5ec; border-color: #2fae8f;
-}
-QPushButton#GhostBtn:disabled { color: #a9c2b9; background: rgba(255,255,255,0.5); }
+QPushButton#GhostBtn:hover { color: #F8FAFC; border-color: #64748B; }
+QPushButton#GhostBtn:pressed { background: #1E293B; }
+QPushButton#GhostBtn:disabled { color: #475569; border-color: #1E293B; }
 
 QPushButton#AccentBtn {
-    background: #e8f7f0;
-    border: 1px solid #2fae8f; color: #1e6b52;
+    background: transparent; border-color: #FFB000; color: #FFB000;
 }
-QPushButton#AccentBtn:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-              stop:0 #4fd0a2, stop:1 #2fae8f);
-    color: white;
-}
-QPushButton#AccentBtn:pressed {
-    background: #229a74; color: white; border-color: #229a74;
-}
-QPushButton#AccentBtn:disabled {
-    color: #9fbaae; background: #eef6f1; border-color: #cfe5d9;
-}
+QPushButton#AccentBtn:hover { background: rgba(255,176,0,0.12); color: #FFC933; }
+QPushButton#AccentBtn:pressed { background: #FFB000; color: #020617; }
+QPushButton#AccentBtn:disabled { color: #475569; border-color: #1E293B; }
 
 QPushButton#DangerBtn {
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid #eecdd3; color: #d0455e;
+    background: transparent; border-color: #7F1D1D; color: #F87171;
 }
-QPushButton#DangerBtn:hover { background: #fdeef1; border-color: #e0566b; }
-QPushButton#DangerBtn:pressed { background: #fadcdf; border-color: #d0455e; }
-QPushButton#DangerBtn:disabled { color: #e8b6bf; background: rgba(255,255,255,0.5);
-                                 border-color: #f2e2e5; }
+QPushButton#DangerBtn:hover { background: #450A0A; border-color: #F87171; }
+QPushButton#DangerBtn:pressed { background: #7F1D1D; color: #FFFFFF; }
+QPushButton#DangerBtn:disabled { color: #475569; border-color: #1E293B; }
 
 QPushButton#IconBtn {
-    background: transparent; color: #9db7ac; padding: 4px 9px;
-    border-radius: 9px; font-size: 15px; font-weight: 800;
+    background: transparent; color: #64748B; padding: 4px 9px;
+    border-radius: 0; font-size: 13px; font-weight: 800;
     border: 1px solid transparent;
 }
-QPushButton#IconBtn:hover { background: #fde7ec; color: #d0455e; }
-QPushButton#IconBtn:pressed { background: #fad5dc; color: #b53b50; }
+QPushButton#IconBtn:hover { background: #450A0A; color: #F87171; border-color: #7F1D1D; }
+QPushButton#IconBtn:pressed { background: #7F1D1D; color: #FFFFFF; }
 
-/* ---------------- drop zone --------------- */
 #DropZone {
-    background: rgba(255, 255, 255, 0.5);
-    border: 2px dashed #bcd9cc;
-    border-radius: 24px;
+    background: #0F172A;
+    border: 1px dashed #334155;
+    border-radius: 0;
 }
-#DropZone:hover { border-color: #7ccfae; background: rgba(255,255,255,0.65); }
+#DropZone:hover { border-color: #FFB000; background: rgba(255,176,0,0.05); }
 #DropZone[drag="true"] {
-    background: #eefaf4; border-color: #2fae8f;
+    background: rgba(255,176,0,0.10); border-color: #FFB000;
 }
-#DropIcon { color: #2fae8f; font-size: 42px; font-weight: 400; }
-#DropHint { font-size: 17px; font-weight: 800; color: #1e5a44; }
-#DropSub  { font-size: 12px; color: #6d8d82; }
+#DropIcon { color: #FFB000; font-size: 34px; font-weight: 400; }
+#DropHint { font-size: 15px; font-weight: 700; color: #F8FAFC; letter-spacing: 0.5px; }
+#DropSub  { font-size: 11px; color: #64748B; letter-spacing: 0.6px; }
 
-/* ---------------- file rows ---------------- */
 #FileRow {
-    background: rgba(255, 255, 255, 0.75);
-    border: 1px solid rgba(217, 232, 224, 0.9);
-    border-radius: 14px;
+    background: #0F172A;
+    border: 1px solid #334155;
+    border-radius: 0;
 }
-#FileRow:hover {
-    background: #ffffff;
-    border-color: #9fdcc3;
-}
+#FileRow:hover { border-color: #64748B; background: #1E293B; }
 #FileBadge {
-    color: white; border-radius: 9px;
-    font-size: 10px; font-weight: 800; letter-spacing: 0.4px;
+    color: #020617; border-radius: 0;
+    font-size: 10px; font-weight: 800; letter-spacing: 0.6px;
 }
-#FileName { font-size: 13px; font-weight: 700; color: #173b2e; }
-#FileMeta { font-size: 11px; color: #7c9a90; }
-#ListEmpty { font-size: 12px; color: #8aa69c; padding: 14px 4px; }
+#FileName { font-size: 12px; font-weight: 700; color: #F8FAFC; }
+#FileMeta { font-size: 10px; color: #64748B; }
+#ListEmpty { font-size: 11px; color: #475569; padding: 14px 4px; }
 
-/* ---------------- stats / misc ---------------- */
-#StatValue { font-size: 24px; font-weight: 800; color: #1e3b33; }
-#StatLabel { font-size: 11px; color: #6d8d82; font-weight: 700; }
+#StatValue { font-size: 20px; font-weight: 800; color: #FFB000; }
+#StatLabel { font-size: 10px; color: #64748B; font-weight: 700; letter-spacing: 1.2px; }
 
 #WebBar {
-    background: rgba(255,255,255,0.8);
-    border: none; border-bottom: 1px solid #e3efe9;
+    background: #0F172A;
+    border: none; border-bottom: 1px solid #334155;
     border-bottom-left-radius: 0; border-bottom-right-radius: 0;
 }
 
 QListWidget {
-    background: rgba(255,255,255,0.6);
-    border: 1px solid #dfede6; border-radius: 14px; padding: 4px;
-    font-size: 13px; color: #16342a;
+    background: #0F172A;
+    border: 1px solid #334155; border-radius: 0; padding: 4px;
+    font-size: 12px; color: #94A3B8;
 }
-QListWidget::item { padding: 8px; border-radius: 9px; }
-QListWidget::item:hover { background: #f2faf6; }
-QListWidget::item:selected { background: #e2f5eb; color: #16342a; }
+QListWidget::item { padding: 8px; border-radius: 0; border-bottom: 1px solid #1E293B; }
+QListWidget::item:hover { background: #1E293B; color: #F8FAFC; }
+QListWidget::item:selected { background: rgba(255,176,0,0.12); color: #FFB000; border-left: 2px solid #FFB000; }
 
-/* ---------------- toast ---------------- */
 #Toast {
-    background: #1e4b3a;
-    color: #eef9f3; border: 1px solid rgba(255,255,255,0.14);
-    border-radius: 12px; font-size: 12.5px; font-weight: 600;
-    padding: 11px 18px;
+    background: #0F172A;
+    color: #FFB000; border: 1px solid #FFB000;
+    border-radius: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.6px;
+    padding: 10px 16px;
 }
 """
 
@@ -331,7 +306,7 @@ def header_row(window) -> QFrame:
 
     brand = QVBoxLayout()
     brand.setSpacing(1)
-    t = QLabel("TraceWeave")
+    t = QLabel("Sutram")
     t.setObjectName("AppTitle")
     tag = QLabel("multi-source anomaly detection · drag-and-drop analyst")
     tag.setObjectName("AppTag")
@@ -599,7 +574,7 @@ class HomePage(QWidget):
 class HistoryDialog(QDialog):
     def __init__(self, runs, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("TraceWeave — History")
+        self.setWindowTitle("Sutram — History")
         self.resize(720, 480)
         self.runs = runs
         lay = QVBoxLayout(self)
@@ -736,7 +711,7 @@ class ReportView(QWidget):
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TraceWeave")
+        self.setWindowTitle("Sutram")
         self.resize(1200, 820)
         self.setObjectName("Root")
 
@@ -777,7 +752,7 @@ class MainWindow(QWidget):
         self.home.btn_analyze.setEnabled(True)
         self.home.btn_analyze.setText("Analyze")
         if isinstance(result, Exception):
-            QMessageBox.critical(self, "TraceWeave",
+            QMessageBox.critical(self, "Sutram",
                                  f"Analysis failed:\n{result}")
             return
         self._show_result(result)
@@ -803,7 +778,7 @@ class MainWindow(QWidget):
         from aml import storage
         meta = storage.load_run(run_id)
         if not meta:
-            QMessageBox.warning(self, "TraceWeave", f"Run {run_id} not found.")
+            QMessageBox.warning(self, "Sutram", f"Run {run_id} not found.")
             return
         html = meta.get("files", {}).get("html")
         if html and Path(html).exists():
@@ -850,7 +825,7 @@ def _apply_refresh(result, btn, window=None):
     if window is not None and hasattr(window, "populate"):
         window.populate(result)
     else:
-        QMessageBox.information(btn, "TraceWeave", "Analysis finished.")
+        QMessageBox.information(btn, "Sutram", "Analysis finished.")
 
 
 def main() -> int:
