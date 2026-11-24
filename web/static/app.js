@@ -23,6 +23,13 @@ const FALLBACK_SUGGESTIONS = [
   'Draft a case report.',
 ];
 
+const TOOL_PROMPTS = [
+  ['Rerun analysis', 'Rerun the analysis.'],
+  ['Recheck numbers', 'Recheck the numbers.'],
+  ['Plot network', 'Plot the correlation network.'],
+  ['Generate image', 'Generate an image of a clean forensic case board.'],
+];
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -96,10 +103,21 @@ function post(path, body) {
 }
 
 /* ---------------- markdown-lite ---------------- */
+function safeUrl(url) {
+  const u = String(url || '').trim();
+  if (/^(https?:\/\/|mailto:|#|\/|\.\/|\.\.\/)/i.test(u)) return u;
+  return '#';
+}
+
 function inlineMd(text) {
   return text
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
+      (_m, alt, src) => `<img alt="${alt}" src="${safeUrl(src)}" style="max-width:100%">`)
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
+      (_m, label, href) => `<a href="${safeUrl(href)}" target="_blank" rel="noopener">${label}</a>`)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
+    .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\[C(\d+)\]/g, '<span class="cite-label">C$1</span>');
 }
 
@@ -107,11 +125,33 @@ function md(text) {
   const lines = escapeHtml(text || '').split('\n');
   let html = '';
   let inList = false;
+  const closeList = () => {
+    if (inList) {
+      html += '</ul>';
+      inList = false;
+    }
+  };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].replace(/\s+$/, '');
+
+    // Fenced code block.
+    if (/^\s*```/.test(line)) {
+      closeList();
+      const lang = line.replace(/^\s*```/, '').trim();
+      const code = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) {
+        code.push(lines[i]);
+        i++;
+      }
+      const cls = lang ? ` class="language-${escapeHtml(lang)}"` : '';
+      html += `<pre><code${cls}>${code.join('\n')}</code></pre>`;
+      continue;
+    }
+
     // Markdown table: header row followed by a |---| separator row.
     if (/^\s*\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
-      if (inList) { html += '</ul>'; inList = false; }
+      closeList();
       const cells = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '')
         .split('|').map((c) => inlineMd(c.trim()));
       html += '<table class="md-table"><thead><tr>' +
@@ -125,12 +165,42 @@ function md(text) {
       html += '</tbody></table>';
       continue;
     }
-    if (/^\s*[-•]\s+/.test(line)) {
-      if (!inList) { html += '<ul>'; inList = true; }
-      html += '<li>' + inlineMd(line.replace(/^\s*[-•]\s+/, '')) + '</li>';
+
+    // Headings.
+    const heading = line.match(/^\s*(#{1,4})\s+(.+)$/);
+    if (heading) {
+      closeList();
+      const level = heading[1].length;
+      html += `<h${level}>${inlineMd(heading[2])}</h${level}>`;
       continue;
     }
-    if (inList) { html += '</ul>'; inList = false; }
+
+    // Horizontal rule.
+    if (/^\s*(?:---+|\*\*\*+|___+)\s*$/.test(line)) {
+      closeList();
+      html += '<hr>';
+      continue;
+    }
+
+    // Blockquote (escapeHtml has already turned > into &gt;).
+    if (/^\s*&gt;\s?/.test(line)) {
+      closeList();
+      const quote = [];
+      while (i < lines.length && /^\s*&gt;\s?/.test(lines[i])) {
+        quote.push(lines[i].replace(/^\s*&gt;\s?/, ''));
+        i++;
+      }
+      i--;
+      html += `<blockquote>${quote.map((q) => inlineMd(q)).join('<br>')}</blockquote>`;
+      continue;
+    }
+
+    if (/^\s*[-*+]\s+/.test(line)) {
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += '<li>' + inlineMd(line.replace(/^\s*[-*+]\s+/, '')) + '</li>';
+      continue;
+    }
+    closeList();
     if (!line.trim()) { html += '<br>'; continue; }
     if (/^\s*\d+\.\s+/.test(line)) {
       html += '<div class="numline">' + inlineMd(line) + '</div>';
@@ -142,7 +212,7 @@ function md(text) {
     }
     html += '<p>' + inlineMd(line) + '</p>';
   }
-  if (inList) html += '</ul>';
+  closeList();
   return html;
 }
 
@@ -189,9 +259,32 @@ function renderStats() {
     : '<div class="empty">No sources indexed.</div>';
 }
 
+function renderToolChips() {
+  const box = $('#tool-chips');
+  if (!box) return;
+  box.innerHTML = TOOL_PROMPTS.map(([label, prompt]) =>
+    `<button class="chip tool-chip" data-question="${escapeHtml(prompt)}">${escapeHtml(label)}</button>`
+  ).join('');
+  box.querySelectorAll('.chip').forEach((el) =>
+    el.addEventListener('click', () => ask(el.dataset.question)));
+}
+
 function renderSuggestions() {
   let examples = t('query.examples', FALLBACK_SUGGESTIONS);
   if (!Array.isArray(examples)) examples = FALLBACK_SUGGESTIONS;
+  const people = (state.bundle?.summary?.top_entities || [])
+    .map((e) => e.name)
+    .filter((name) => name && name !== '—');
+  if (people.length >= 2) {
+    examples = [
+      `Show transfers above 9,000 from ${people[0]} in the last 90 days.`,
+      `Who did ${people[1]} call right before the transfer?`,
+      `What is the connection between ${people[0]} and ${people[1]}?`,
+      'What looks suspicious in this case?',
+      'What should I investigate next?',
+      'Draft a case report.',
+    ];
+  }
   $('#suggestions').innerHTML = examples.slice(0, 6).map((q) =>
     `<button class="chip" data-question="${escapeHtml(q)}">${escapeHtml(q)}</button>`
   ).join('');
@@ -253,6 +346,15 @@ function renderFollowups(followups) {
 function renderAnswer(answer) {
   const wrap = addMessage('assistant', md(answer.answer));
   const bubble = wrap.querySelector('.bubble');
+  if (answer.data && answer.data.tool) {
+    const badge = document.createElement('div');
+    badge.className = 'tool-badge';
+    const ms = answer.data.elapsed_ms != null
+      ? ` · ${Number(answer.data.elapsed_ms).toLocaleString()} ms`
+      : '';
+    badge.innerHTML = `<span class="label">TOOL</span> ${escapeHtml(String(answer.data.tool))}${ms}`;
+    bubble.prepend(badge);
+  }
   if (answer.images && answer.images.length) {
     const gallery = document.createElement('div');
     gallery.className = 'answer-images';
@@ -614,6 +716,7 @@ function switchTab(tab) {
 
 /* ---------------- init ---------------- */
 async function init() {
+  renderToolChips();
   try {
     await Promise.all([loadLanguages(), loadCases()]);
     await loadI18n(state.lang);

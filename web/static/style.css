@@ -170,6 +170,29 @@ select:focus, textarea:focus, input:focus { border-color: var(--amber); }
 .bubble li { margin: 2px 0; }
 .bubble strong { color: var(--ink-strong); }
 .bubble code { font-family: var(--mono); font-size: 12px; background: var(--panel-3); padding: 1px 4px; }
+.bubble h1, .bubble h2, .bubble h3, .bubble h4 {
+  color: var(--amber); margin: 12px 0 6px; line-height: 1.25;
+}
+.bubble h1 { font-size: 16px; }
+.bubble h2 { font-size: 14px; }
+.bubble h3 { font-size: 13px; }
+.bubble a { color: var(--amber); text-decoration: underline; text-underline-offset: 2px; }
+.bubble blockquote {
+  border-left: 2px solid var(--sky); margin: 8px 0; padding: 4px 10px;
+  color: var(--muted); background: var(--panel-2);
+}
+.bubble pre {
+  background: var(--panel-3); border: 1px solid var(--border);
+  padding: 8px 10px; margin: 8px 0; overflow: auto;
+}
+.bubble pre code { background: transparent; padding: 0; }
+.bubble hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.tool-badge {
+  font-family: var(--mono); font-size: 10px; color: var(--sky);
+  border: 1px solid rgba(56, 189, 248, 0.5); background: rgba(56, 189, 248, 0.06);
+  padding: 2px 6px; margin-bottom: 8px; display: inline-block;
+}
+.tool-badge .label { color: var(--hint); letter-spacing: 0.8px; margin-right: 4px; }
 .cite-label {
   font-family: var(--mono); font-size: 10px; color: var(--amber);
   border: 1px solid rgba(255, 176, 0, 0.5); padding: 0 4px; margin: 0 1px;
@@ -250,6 +273,12 @@ select:focus, textarea:focus, input:focus { border-color: var(--amber); }
   padding: 5px 9px; font-size: 11px; text-align: left;
 }
 .chip:hover { color: var(--amber); border-color: var(--amber); }
+.tool-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.tool-chip {
+  border-color: rgba(56, 189, 248, 0.45); color: var(--sky);
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.3px;
+}
+.tool-chip:hover { color: var(--ink-strong); border-color: var(--sky); }
 .input-row { display: flex; gap: 8px; align-items: stretch; }
 .input-row textarea { flex: 1; resize: none; min-height: 48px; max-height: 150px; }
 .composer-hint { color: var(--hint); font-size: 10px; margin-top: 7px; font-family: var(--mono); }

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -436,18 +437,26 @@ class InvestigationService:
     # -- agentic tools -----------------------------------------------------
     def _run_tool(self, case: Case, index: EvidenceIndex, plan: QueryPlan,
                   question: str, lang: str) -> Answer:
+        started = time.perf_counter()
         if plan.intent == "run_analysis":
-            return self._tool_run_analysis(case, index, plan, lang)
-        if plan.intent == "recheck":
-            return self._tool_recheck(case, index, plan, lang)
-        if plan.intent == "plot":
-            return self._tool_plot(case, index, plan, lang)
-        if plan.intent == "deep_dive":
-            return self._tool_deep_dive(case, index, plan, lang)
-        if plan.intent == "generate_image":
-            return self._tool_generate_image(case, index, plan, lang)
-        return Answer(answer="Unsupported tool request.", intent=plan.intent,
-                      language=lang, confidence=0.2)
+            answer = self._tool_run_analysis(case, index, plan, lang)
+        elif plan.intent == "recheck":
+            answer = self._tool_recheck(case, index, plan, lang)
+        elif plan.intent == "plot":
+            answer = self._tool_plot(case, index, plan, lang)
+        elif plan.intent == "deep_dive":
+            answer = self._tool_deep_dive(case, index, plan, lang)
+        elif plan.intent == "generate_image":
+            answer = self._tool_generate_image(case, index, plan, lang)
+        else:
+            answer = Answer(answer="Unsupported tool request.", intent=plan.intent,
+                            language=lang, confidence=0.2)
+        # Surface which agent tool ran and how long it took. The Qt and web
+        # chats render these as a compact badge; CLI/JSON callers can ignore
+        # them without changing their answer handling.
+        answer.data.setdefault("tool", plan.intent)
+        answer.data["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+        return answer
 
     @staticmethod
     def _decode_image(data_url: str) -> Optional[bytes]:

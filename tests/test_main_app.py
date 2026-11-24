@@ -53,6 +53,59 @@ def test_home_has_dropzone_and_analyze(qt_app):
     assert win.home.btn_analyze.text() == "Analyze"
 
 
+def test_home_has_investigator_workspace(qt_app):
+    win = MainWindow()
+    assert win.home.btn_case.text() == "Investigator"
+    assert win.case_page is not None
+    win.home.btn_case.click()
+    assert win.stack.currentWidget() is win.case_page
+
+
+def test_case_workspace_ingest_and_chat_render(qt_app, tmp_path):
+    from aml.case import Answer, Citation
+    from aml.config import InvestigationConfig
+    from aml.service import InvestigationService
+    from case_ui import CaseWorkspacePage
+
+    page = CaseWorkspacePage()
+    page.svc = InvestigationService(
+        case_root=str(tmp_path / "cases"),
+        config=InvestigationConfig(case_root=str(tmp_path / "cases"),
+                                   min_events_per_entity=2),
+    )
+    case = page.svc.create_case("UI Test Case", language="en")
+    bank = tmp_path / "bank.csv"
+    rows = ["txn_type,amount,recipient_account,account_name,account_no,timestamp"]
+    for i in range(12):
+        rows.append(f"debit,{100 + i},ACCT2,Alice,ACCT1,2025-10-01 {10 + i}:00:00")
+    bank.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    page.svc.ingest(case.case_id, [str(bank)])
+    page.refresh_cases(select_id=case.case_id)
+    assert page.case is not None
+    assert page.evidence_table.rowCount() >= 1
+    assert page.stat_values["evidence"].text() == "1"
+
+    answer = Answer(
+        answer="**Hello** from the assistant.",
+        intent="search",
+        language="en",
+        citations=[Citation(evidence_id="EV0001", file="bank.csv",
+                            timestamp="2025-10-01T10:00:00",
+                            snippet="Alice debit 100")],
+        confidence=0.9,
+        followups=["Next?"],
+    )
+    page._after_answer(answer)
+    assert "Hello" in page.chat_view.toPlainText()
+    assert page.confidence.text() == "90%"
+    assert any(
+        isinstance(page.followup_box.itemAt(i).widget(), QPushButton)
+        and page.followup_box.itemAt(i).widget().text() == "Next?"
+        for i in range(page.followup_box.count())
+    )
+    page.deleteLater()
+
+
 def test_analyze_flow_enables_and_persists(qt_app, synthetic_dir, tmp_path, monkeypatch):
     """Dropping supported files enables Analyze; pressing it archives a run
     under the user data dir and switches to the report webview."""

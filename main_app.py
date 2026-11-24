@@ -18,6 +18,10 @@ Run:
 """
 from __future__ import annotations
 
+import base64
+import html
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -25,15 +29,31 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
+# The case workspace does not need the optional torch probe; the analytics
+# models that require torch warn-skip cleanly.
+os.environ.setdefault("AML_SKIP_TORCH", "1")
+
 from PySide6.QtCore import QPropertyAnimation, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QLinearGradient,
+    QPainter,
+    QPixmap,
+    QTextDocument,
+)
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
+    QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QHBoxLayout,
+    QHeaderView,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -41,10 +61,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
+    QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextBrowser,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+
+from aml.i18n import SUPPORTED_LANGUAGES, language_name, t  # noqa: E402
+from case_ui import CaseWorkspacePage  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # theme — Sutram terminal console: flat obsidian panels, amber semantic
@@ -205,6 +234,56 @@ QListWidget::item:selected { background: rgba(255,176,0,0.12); color: #FFB000; b
     border-radius: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.6px;
     padding: 10px 16px;
 }
+
+/* ---- case workspace ---- */
+QComboBox, QLineEdit {
+    background: #0F172A; color: #F8FAFC; border: 1px solid #334155;
+    border-radius: 0; padding: 7px 9px; min-height: 18px;
+}
+QComboBox:focus, QLineEdit:focus { border-color: #FFB000; }
+QComboBox QAbstractItemView {
+    background: #0F172A; color: #F8FAFC; border: 1px solid #334155;
+    selection-background-color: rgba(255,176,0,0.18);
+    selection-color: #FFB000;
+}
+QTextBrowser, QTextEdit {
+    background: #0B1220; color: #E2E8F0; border: 1px solid #334155;
+    border-radius: 0; padding: 8px;
+    selection-background-color: rgba(255,176,0,0.22);
+    selection-color: #FFB000;
+}
+QTextEdit { font-size: 13px; }
+QTabWidget::pane { border: 1px solid #334155; background: #0B1220; }
+QTabBar::tab {
+    background: #0F172A; color: #94A3B8; padding: 8px 14px;
+    border: 1px solid #334155; border-bottom: none;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.8px;
+}
+QTabBar::tab:selected { color: #FFB000; border-bottom: 2px solid #FFB000; }
+QTabBar::tab:hover { color: #F8FAFC; }
+QTableWidget {
+    background: #0F172A; alternate-background-color: #111C31;
+    color: #E2E8F0; gridline-color: #263449;
+    border: 1px solid #334155; border-radius: 0;
+    font-size: 11px; selection-background-color: rgba(255,176,0,0.14);
+    selection-color: #FFB000;
+}
+QHeaderView::section {
+    background: #1E293B; color: #94A3B8; border: 1px solid #334155;
+    padding: 5px 6px; font-size: 9px; font-weight: 700; letter-spacing: 0.8px;
+}
+QTableWidget::item { padding: 4px; }
+#CaseTitle { font-size: 16px; font-weight: 800; color: #F8FAFC; }
+#CaseMeta { font-size: 10px; color: #64748B; }
+#CaseStatValue { font-size: 18px; font-weight: 800; color: #FFB000; }
+#CaseStatLabel { font-size: 9px; color: #64748B; font-weight: 700; letter-spacing: 1px; }
+#Chat { background: #020617; border: 1px solid #263449; }
+#Inspector { background: #0B1220; border: 1px solid #263449; }
+#LLMStatus { color: #34D399; font-size: 10px; }
+#CaseSourceList {
+    background: #0F172A; color: #94A3B8; border: 1px solid #263449;
+    font-size: 10px;
+}
 """
 
 ALLOWED_EXTENSIONS_HINT = "CSV · TSV · JSON · JSONL · TXT · LOG — bank, CDR, social, prose"
@@ -308,7 +387,7 @@ def header_row(window) -> QFrame:
     brand.setSpacing(1)
     t = QLabel("Sutram")
     t.setObjectName("AppTitle")
-    tag = QLabel("multi-source anomaly detection · drag-and-drop analyst")
+    tag = QLabel("AI-powered digital investigation assistant · analytics + case workspace")
     tag.setObjectName("AppTag")
     brand.addWidget(t)
     brand.addWidget(tag)
@@ -435,6 +514,7 @@ class HomePage(QWidget):
     user drops or browses them, and every file can be removed again."""
     analyze_clicked = Signal(object)
     history_requested = Signal()
+    case_requested = Signal()
     toast_requested = Signal(str)
 
     def __init__(self, parent=None):
@@ -491,6 +571,11 @@ class HomePage(QWidget):
         # ---- actions --------------------------------------------------------
         actions = QHBoxLayout()
         actions.setSpacing(10)
+        self.btn_case = QPushButton("Investigator")
+        self.btn_case.setObjectName("AccentBtn")
+        self.btn_case.setToolTip("Open the case workspace: evidence, chat, findings, leads, diary, report")
+        self.btn_case.clicked.connect(self.case_requested)
+        actions.addWidget(self.btn_case)
         self.btn_history = QPushButton("History")
         self.btn_history.setObjectName("GhostBtn")
         self.btn_history.clicked.connect(self.history_requested)
@@ -711,8 +796,8 @@ class ReportView(QWidget):
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Sutram")
-        self.resize(1200, 820)
+        self.setWindowTitle("Sutram Investigator")
+        self.resize(1380, 900)
         self.setObjectName("Root")
 
         self.storage = None
@@ -723,22 +808,31 @@ class MainWindow(QWidget):
         self.stack = QStackedWidget(self)
         self.home = HomePage(self)
         self.report = ReportView(self)
+        self.case_page = CaseWorkspacePage(self)
         self.stack.addWidget(self.home)
         self.stack.addWidget(self.report)
+        self.stack.addWidget(self.case_page)
         self.root_lay.addWidget(self.stack, 1)
 
         self.home.analyze_clicked.connect(self._analyze_files)
         self.home.history_requested.connect(self._open_history)
+        self.home.case_requested.connect(self._open_case_workspace)
         self.home.toast_requested.connect(self.toast)
         self.report.home_requested.connect(lambda: self.stack.setCurrentIndex(0))
         self.report.history_requested.connect(self._open_history)
         self.report.export_requested.connect(self._export)
+        self.case_page.home_requested.connect(lambda: self.stack.setCurrentWidget(self.home))
+        self.case_page.toast_requested.connect(self.toast)
 
     # -- toast ---------------------------------------------------------------
     def toast(self, text: str, ms: int = 3800):
         self._toast.notify(text, ms)
 
     # -- actions -------------------------------------------------------------
+    def _open_case_workspace(self):
+        self.case_page.refresh_cases()
+        self.stack.setCurrentWidget(self.case_page)
+
     def _analyze_files(self, paths):
         self._last_files = list(paths)
         self.home.btn_analyze.setEnabled(False)
@@ -832,6 +926,7 @@ def main() -> int:
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--shot", default="")
+    ap.add_argument("--case", default="", help="open the case workspace on startup")
     args = ap.parse_args()
 
     app = QApplication(sys.argv)
@@ -839,6 +934,12 @@ def main() -> int:
 
     win = MainWindow()
     win.show()
+
+    if args.case:
+        win._open_case_workspace()
+        idx = win.case_page.case_combo.findData(args.case)
+        if idx >= 0:
+            win.case_page.case_combo.setCurrentIndex(idx)
 
     if args.shot:
         # offline smoke: analyze the shipped sample set and capture the report view
