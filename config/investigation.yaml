@@ -1,0 +1,22 @@
+# Sutram Investigator — investigation layer configuration
+# The analytics core keeps using config/config.yaml; this file controls the
+# case workspace, retrieval/assistant defaults and optional LLM polish.
+investigation:
+  case_root: "data/cases"
+  language: "en"
+
+  # analytics thresholds passed to the aml pipeline
+  min_events_per_entity: 30
+  tol_minutes: 25
+  structuring_threshold: 10000.0
+  top_k: 10
+  max_findings: 25
+
+  # Optional grounded LLM polish. Default is fully offline ("none").
+  # Supported: none | openai | ollama
+  # For OpenAI-compatible endpoints set INVESTIGATION_LLM_API_KEY and
+  # INVESTIGATION_LLM_BASE_URL (or OPENAI_API_KEY / OPENAI_BASE_URL).
+  llm_provider: "none"
+  llm_model: ""
+  llm_base_url: ""
+  llm_timeout: 30

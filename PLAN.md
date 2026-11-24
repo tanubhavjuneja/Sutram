@@ -1,5 +1,14 @@
 # TraceWeave — Multi-Model Anomaly Detection Engine
 
+> **2026-11-24 — new problem statement:** the project has been extended into
+> **Sutram Investigator — AI-Powered Digital Investigation Assistant**. The AML
+> engine documented below remains the verified analytics core; the new case,
+> evidence-retrieval, conversational, recommendation, diary, multilingual and
+> report layers live in `src/investigation` and `web/`. See
+> `INVESTIGATION_PLAN.md` for the mapping, gap analysis and roadmap, and
+> `README.md` for the new quickstart. The numbers in this file remain the
+> analytics-core baseline and are still reproducible with `python eval.py`.
+
 **Project**: multi-source financial intelligence — detect anomalous patterns across Call Detail Records (CDR), bank transactions, and social media activity, using a dataframe-centric pipeline with a *mixture* of specialized models, an honest data-sufficiency engine, and a verified evaluation harness.
 
 **Status (2026-08-18)**: ~90% built and verified. This document is the single compiled plan — it supersedes the original research/execution plan (`PLAN.md` pre-remake), the duplicate `PLAN (1).md`, and the `GAP_AUDIT.md`. `SCHEMA.md` remains the frozen dataframe spec.

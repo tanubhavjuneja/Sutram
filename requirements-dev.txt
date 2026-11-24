@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# test tooling
+pytest>=8.0

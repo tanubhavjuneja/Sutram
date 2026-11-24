@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sutram Investigator — AI-Powered Digital Investigation Assistant</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">S</div>
+      <div class="brand-text">
+        <div class="title">SUTRAM <span>INVESTIGATOR</span></div>
+        <div class="tag" data-i18n="app.tagline">AI-Powered Digital Investigation Assistant</div>
+      </div>
+    </div>
+    <div class="controls">
+      <label class="field">
+        <span data-i18n="app.case">Case</span>
+        <select id="case-select"></select>
+      </label>
+      <label class="field">
+        <span data-i18n="common.language">Language</span>
+        <select id="lang-select"></select>
+      </label>
+      <button id="refresh-btn" class="btn ghost" data-i18n="common.refresh">Refresh</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="case-card">
+        <div class="case-title" id="case-title">—</div>
+        <div class="case-meta" id="case-meta">—</div>
+        <div class="stats" id="stats"></div>
+      </div>
+      <nav class="nav">
+        <button class="nav-btn active" data-tab="assistant" data-i18n="nav.assistant">Assistant</button>
+        <button class="nav-btn" data-tab="evidence" data-i18n="nav.evidence">Evidence</button>
+        <button class="nav-btn" data-tab="entities" data-i18n="nav.entities">Entities</button>
+        <button class="nav-btn" data-tab="findings" data-i18n="nav.findings">Findings</button>
+        <button class="nav-btn" data-tab="leads" data-i18n="nav.recommendations">Leads</button>
+        <button class="nav-btn" data-tab="diary" data-i18n="nav.diary">Case diary</button>
+        <button class="nav-btn" data-tab="report" data-i18n="nav.report">Report</button>
+      </nav>
+      <div class="sidebar-note">
+        <div class="note-label" data-i18n="common.sources">Sources</div>
+        <div id="source-list" class="source-list"></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section id="tab-assistant" class="tab active">
+        <div class="chat" id="chat"></div>
+        <div class="composer">
+          <div class="suggestions" id="suggestions"></div>
+          <div class="input-row">
+            <textarea id="question" rows="2" data-i18n-placeholder="chat.placeholder" placeholder="Ask about the evidence, an entity, a timeline, or what to do next…"></textarea>
+            <button id="send-btn" class="btn primary" data-i18n="common.send">Send</button>
+          </div>
+          <div class="composer-hint">
+            <span data-i18n="chat.grounded">Answers are grounded in the indexed evidence; every factual claim is cited.</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-evidence" class="tab">
+        <div class="section-head">
+          <h2 data-i18n="evidence.title">Evidence inventory</h2>
+          <div id="evidence-count" class="muted"></div>
+        </div>
+        <div id="evidence-list" class="table-wrap"></div>
+      </section>
+
+      <section id="tab-entities" class="tab">
+        <div class="section-head">
+          <h2 data-i18n="entities.title">Entities</h2>
+          <div id="entity-count" class="muted"></div>
+        </div>
+        <div id="entity-list" class="cards"></div>
+      </section>
+
+      <section id="tab-findings" class="tab">
+        <div class="section-head">
+          <h2 data-i18n="findings.title">Suspicious-pattern findings</h2>
+          <div id="finding-count" class="muted"></div>
+        </div>
+        <div id="finding-list" class="cards"></div>
+      </section>
+
+      <section id="tab-leads" class="tab">
+        <div class="section-head">
+          <h2 data-i18n="recommendations.title">Investigative leads</h2>
+          <button id="regen-leads" class="btn ghost" data-i18n="common.refresh">Refresh</button>
+        </div>
+        <div id="lead-list" class="cards"></div>
+      </section>
+
+      <section id="tab-diary" class="tab">
+        <div class="section-head">
+          <h2 data-i18n="diary.title">Case diary</h2>
+          <div id="chain-status" class="muted"></div>
+        </div>
+        <div id="diary-list" class="diary"></div>
+      </section>
+
+      <section id="tab-report" class="tab">
+        <div class="section-head">
+          <h2 data-i18n="report.title">Draft case report</h2>
+        </div>
+        <div class="report-panel">
+          <p class="muted" id="report-hint" data-i18n="report.hint">Generate a draft case report from the indexed evidence, findings, recommendations and diary.</p>
+          <div class="report-actions">
+            <button id="generate-report" class="btn primary" data-i18n="report.generate">Generate report</button>
+            <a id="download-md" class="btn ghost hidden" target="_blank" rel="noopener">Download MD</a>
+            <a id="download-html" class="btn ghost hidden" target="_blank" rel="noopener">Open HTML</a>
+            <a id="download-pdf" class="btn ghost hidden" target="_blank" rel="noopener">Download PDF</a>
+            <a id="download-json" class="btn ghost hidden" target="_blank" rel="noopener">Download JSON</a>
+            <a id="download-analytics" class="btn ghost hidden" target="_blank" rel="noopener">Analytics appendix</a>
+          </div>
+          <div id="summary-panel" class="summary-panel"></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="inspector">
+      <div class="inspector-head">
+        <div class="label" data-i18n="common.citations">Citations</div>
+        <div id="confidence" class="confidence">—</div>
+      </div>
+      <div id="citation-list" class="citation-list">
+        <div class="empty">Ask a question to see grounded citations.</div>
+      </div>
+      <div class="inspector-section">
+        <div class="label" data-i18n="chat.followups">You could ask next</div>
+        <div id="followups" class="followups"></div>
+      </div>
+      <div class="inspector-section">
+        <div class="label" data-i18n="common.details">Details</div>
+        <div id="answer-meta" class="answer-meta">—</div>
+      </div>
+    </aside>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>

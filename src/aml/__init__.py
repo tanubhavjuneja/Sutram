@@ -20,18 +20,24 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 # have already loaded. Eager import in a fresh process is reliable.
 import sys as _sys
 _TORCH_OK = False
-for _attempt in range(3):
-    try:
-        import torch  # noqa: F401
-        torch.set_num_threads(1)
-        torch.set_num_interop_threads(1)
-        _TORCH_OK = True
-        break
-    except Exception as _e:  # pragma: no cover - environment dependent
-        import time as _time
-        print(f"torch import attempt {_attempt + 1} failed: {_e!r}", file=_sys.stderr)
-        _time.sleep(1)
-if not _TORCH_OK:
+# The investigation CLI sets AML_SKIP_TORCH=1: the deep models are optional and
+# the eager probe costs several seconds when torch is absent.  Existing tests
+# and the analytics CLI keep the original behaviour.
+if os.environ.get("AML_SKIP_TORCH") == "1":
+    _TORCH_OK = False
+else:
+    for _attempt in range(3):
+        try:
+            import torch  # noqa: F401
+            torch.set_num_threads(1)
+            torch.set_num_interop_threads(1)
+            _TORCH_OK = True
+            break
+        except Exception as _e:  # pragma: no cover - environment dependent
+            import time as _time
+            print(f"torch import attempt {_attempt + 1} failed: {_e!r}", file=_sys.stderr)
+            _time.sleep(1)
+if not _TORCH_OK and os.environ.get("AML_SKIP_TORCH") != "1":
     print("warning: torch unavailable; deep models (LSTM/TGN) will be skipped",
           file=_sys.stderr)
 
