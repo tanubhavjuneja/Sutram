@@ -19,6 +19,7 @@ Case data lives under ``data/cases/<case_id>/`` (configurable with ``--root``).
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import sys
 from pathlib import Path
@@ -31,9 +32,9 @@ sys.path.insert(0, str(ROOT / "src"))
 import os
 os.environ.setdefault("AML_SKIP_TORCH", "1")
 
-from investigation import InvestigationService  # noqa: E402
-from investigation.config_loader import load_config  # noqa: E402
-from investigation.i18n import SUPPORTED_LANGUAGES, language_name  # noqa: E402
+from aml.service import InvestigationService  # noqa: E402
+from aml.config import load_config  # noqa: E402
+from aml.i18n import SUPPORTED_LANGUAGES, language_name  # noqa: E402
 
 
 def _utf8_stdout() -> None:
@@ -130,11 +131,23 @@ def cmd_analyze(args) -> int:
 
 def cmd_ask(args) -> int:
     svc = _service(args)
-    answer = svc.ask(args.case, args.question, lang=args.lang, session_id=args.session)
+    images = []
+    for image_path in getattr(args, "image", []) or []:
+        raw = Path(image_path).read_bytes()
+        mime = "image/jpeg" if raw[:2] == b"\xff\xd8" else "image/png"
+        images.append(f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}")
+    answer = svc.ask(args.case, args.question, lang=args.lang,
+                     session_id=args.session, images=images or None)
     if args.json:
         _print_json(answer.to_dict())
         return 0
     print(answer.answer)
+    for image in answer.images:
+        print(f"\n![{image.get('caption', 'chart')}]"
+              f"({image.get('path') or image.get('url')})")
+    for artifact in answer.artifacts:
+        print(f"- {artifact.get('label', 'file')}: "
+              f"{artifact.get('path') or artifact.get('url')}")
     print(f"\n[intent: {answer.intent} · confidence: {answer.confidence:.2f} · "
           f"language: {answer.language}]")
     if answer.followups:
@@ -208,6 +221,12 @@ def cmd_chat(args) -> int:
         answer = svc.ask(case.case_id, line, lang=lang)
         print()
         print(answer.answer)
+        for image in answer.images:
+            print(f"\n![{image.get('caption', 'chart')}]"
+                  f"({image.get('path') or image.get('url')})")
+        for artifact in answer.artifacts:
+            print(f"- {artifact.get('label', 'file')}: "
+                  f"{artifact.get('path') or artifact.get('url')}")
         print(f"\n[intent: {answer.intent} · confidence: {answer.confidence:.2f}]")
     return 0
 
@@ -220,7 +239,7 @@ def cmd_summary(args) -> int:
     else:
         print(result["text"])
         if result.get("limitations"):
-            from investigation.i18n import t
+            from aml.i18n import t
             case = svc.load_case(args.case)
             print("\n" + t("report.limitations", args.lang or case.language) + ":")
             for item in result["limitations"]:
@@ -366,7 +385,7 @@ def cmd_overview(args) -> int:
 
 
 def cmd_demo(args) -> int:
-    from investigation.demo_case import build_demo_case
+    from aml.data_generator.investigation_case import build_demo_case
     result = build_demo_case(
         root=Path(args.demo_dir) if args.demo_dir else ROOT / "data" / "demo_case",
         case_root=Path(args.root),
@@ -426,6 +445,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("case")
     p.add_argument("question")
     p.add_argument("--session", default="default")
+    p.add_argument("--image", action="append", default=[],
+                   help="attach an image for vision analysis (repeatable)")
     p.set_defaults(func=cmd_ask)
 
     p = _sub("chat", help="interactive conversational assistant")

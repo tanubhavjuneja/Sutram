@@ -1,14 +1,17 @@
 """End-to-end tests for case ingestion, retrieval, assistant, diary and report."""
 from __future__ import annotations
 
+import base64
 from email.message import EmailMessage
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from investigation.models import Citation, Finding
-from investigation.recommend import generate_recommendations
-from investigation.service import InvestigationConfig, InvestigationService
+from aml.case import Citation, Finding
+from aml.config import InvestigationConfig
+from aml.recommend import generate_recommendations
+from aml.service import InvestigationService
 
 
 def _write_case_files(tmp_path: Path) -> list:
@@ -76,6 +79,8 @@ def service_case(tmp_path):
     case = svc.create_case("E2E Test Case", description="small mixed case", language="en")
     paths = _write_case_files(tmp_path)
     ingest = svc.ingest(case.case_id, paths, custodian="Test custodian")
+    # Never call the real Cloudflare API from the test suite.
+    svc.llm = FakeLLM()
     return svc, svc.load_case(case.case_id), ingest, paths
 
 
@@ -209,3 +214,92 @@ def test_case_report_generation(service_case, tmp_path):
     hindi = svc.report(case.case_id, lang="hi")
     hi_md = Path(hindi["files"]["md"]).read_text(encoding="utf-8")
     assert "ड्राफ्ट केस रिपोर्ट" in hi_md or "केस रिपोर्ट" in hi_md
+
+
+# ---------------------------------------------------------------------------
+# agentic tools: plot / rerun / recheck / deep dive / vision / image generation
+# ---------------------------------------------------------------------------
+_PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII="
+)
+
+
+class FakeLLM:
+    """Deterministic stand-in so tool tests never hit the network."""
+
+    def __init__(self):
+        self.available = True
+        self.config = SimpleNamespace(
+            model="fake-vision",
+            image_model="fake-image",
+            to_dict=lambda: {"provider": "fake"},
+        )
+
+    def complete(self, *args, **kwargs):
+        return "OK"
+
+    def polish_answer(self, question, draft, citations, lang="en", max_citations=6):
+        return draft
+
+    def describe_image(self, image, question, lang="en", max_tokens=500):
+        return "A test chart with a line."
+
+    def generate_image(self, prompt, steps=4):
+        return _PNG_1PX
+
+
+def test_agent_plot_returns_inline_image(service_case):
+    svc, case, _ingest, _paths = service_case
+    svc.llm = FakeLLM()
+    answer = svc.ask(case.case_id, "Plot the timeline.")
+    assert answer.intent == "plot"
+    assert answer.images
+    assert Path(answer.images[0]["path"]).exists()
+    assert answer.to_dict()["images"]
+
+
+def test_agent_generate_image(service_case):
+    svc, case, _ingest, _paths = service_case
+    svc.llm = FakeLLM()
+    answer = svc.ask(case.case_id, "Generate an image of a suspect board.")
+    assert answer.intent == "generate_image"
+    assert answer.images
+    assert Path(answer.images[0]["path"]).exists()
+    assert "synthetic illustration" in answer.answer.lower()
+
+
+def test_agent_vision_reads_uploaded_image(service_case):
+    svc, case, _ingest, _paths = service_case
+    svc.llm = FakeLLM()
+    data_url = "data:image/png;base64," + base64.b64encode(_PNG_1PX).decode("ascii")
+    answer = svc.ask(case.case_id, "What is in this image?", images=[data_url])
+    assert answer.intent == "vision"
+    assert "Image analysis" in answer.answer
+    assert answer.images
+    assert Path(answer.images[0]["path"]).exists()
+
+
+def test_agent_recheck_numbers(service_case):
+    svc, case, _ingest, _paths = service_case
+    svc.llm = FakeLLM()
+    answer = svc.ask(case.case_id, "Recheck the numbers.")
+    assert answer.intent == "recheck"
+    assert "matching events" in answer.answer
+    assert "| metric | value |" in answer.answer
+
+
+def test_agent_deep_dive(service_case):
+    svc, case, _ingest, _paths = service_case
+    svc.llm = FakeLLM()
+    answer = svc.ask(case.case_id, "Analyze further for structuring.")
+    assert answer.intent == "deep_dive"
+    assert "Deep dive" in answer.answer
+
+
+def test_agent_rerun_analysis(service_case):
+    svc, case, _ingest, _paths = service_case
+    svc.llm = FakeLLM()
+    answer = svc.ask(case.case_id, "Rerun the analysis.")
+    assert answer.intent == "run_analysis"
+    assert "Analysis rerun complete" in answer.answer
+    assert answer.artifacts

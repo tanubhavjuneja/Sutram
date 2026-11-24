@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 from .diary import render_diary_md, verify_chain
 from .i18n import t
 from .index import EvidenceIndex, _safe_ts, _short
-from .models import Case, Finding, QueryPlan
+from .case import Case, Finding, QueryPlan
 from .summarize import case_summary, limitations
 
 _SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}

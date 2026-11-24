@@ -2,9 +2,10 @@
 
 > **2026-11-24 — new problem statement:** the project has been extended into
 > **Sutram Investigator — AI-Powered Digital Investigation Assistant**. The AML
-> engine documented below remains the verified analytics core; the new case,
-> evidence-retrieval, conversational, recommendation, diary, multilingual and
-> report layers live in `src/investigation` and `web/`. See
+> engine documented below remains the verified analytics core; the case,
+> evidence-retrieval, conversational, recommendation, diary, multilingual,
+> report, Cloudflare Workers AI and agent-tool layers now live **inside
+> `src/aml`** (`CasePipeline` extends the existing `Pipeline`). See
 > `INVESTIGATION_PLAN.md` for the mapping, gap analysis and roadmap, and
 > `README.md` for the new quickstart. The numbers in this file remain the
 > analytics-core baseline and are still reproducible with `python eval.py`.

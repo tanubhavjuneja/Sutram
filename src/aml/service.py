@@ -17,69 +17,24 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
-import yaml
 
 from .assistant import ForensicAssistant, SessionContext
 from .case_report import generate_case_report
 from .case_store import CaseStore
+from .config import InvestigationConfig
 from .diary import append_entry, verify_chain
 from .evidence import IngestResult, ingest_paths
 from .i18n import SUPPORTED_LANGUAGES, language_name, normalize_language, t
 from .index import EvidenceIndex
-from .llm import LLMClient, LLMConfig
-from .models import Answer, Case, Citation, Entity, Finding, QueryPlan, Recommendation, utc_now
+from .llm import LLMClient
+from .case import Answer, Case, Citation, Entity, Finding, QueryPlan, Recommendation, utc_now
 from .recommend import generate_recommendations, recommendation_summary
 from .summarize import case_summary, entity_dossier, evidence_gaps, timeline_summary
-
-
-@dataclass
-class InvestigationConfig:
-    case_root: str = "data/cases"
-    language: str = "en"
-    min_events_per_entity: int = 30
-    tol_minutes: int = 25
-    structuring_threshold: float = 10000.0
-    top_k: int = 10
-    max_findings: int = 25
-    llm_provider: str = "none"
-    llm_model: str = ""
-    llm_base_url: str = ""
-    llm_timeout: int = 30
-
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> "InvestigationConfig":
-        p = Path(path)
-        cfg = cls()
-        if not p.exists():
-            return cfg
-        try:
-            raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        except Exception:
-            return cfg
-        section = raw.get("investigation", raw) or {}
-        for key, value in section.items():
-            if key in cfg.__dataclass_fields__:
-                setattr(cfg, key, value)
-        return cfg
-
-    def llm_config(self) -> LLMConfig:
-        import os
-        provider = (self.llm_provider or os.getenv("INVESTIGATION_LLM_PROVIDER") or "none").lower()
-        if provider == "none":
-            return LLMConfig.from_env()
-        return LLMConfig(
-            provider=provider,
-            model=self.llm_model or os.getenv("INVESTIGATION_LLM_MODEL", ""),
-            base_url=self.llm_base_url or os.getenv("INVESTIGATION_LLM_BASE_URL", ""),
-            api_key=os.getenv("INVESTIGATION_LLM_API_KEY", "") or os.getenv("OPENAI_API_KEY", ""),
-            timeout=int(self.llm_timeout or 30),
-            enabled=True,
-        )
 
 
 def _infer_finding_kind(text: str) -> str:
@@ -120,6 +75,9 @@ class InvestigationService:
         self.llm = LLMClient(self.config.llm_config())
         self._index_cache: Dict[str, Tuple[str, EvidenceIndex]] = {}
         self._sessions: Dict[Tuple[str, str], SessionContext] = {}
+        # Latest analytics PipelineResult per case, reused by the chart/deep-dive
+        # tools without re-running the models on every chat turn.
+        self._analytics_results: Dict[str, Any] = {}
 
     # -- case lifecycle ----------------------------------------------------
     def create_case(self, title: str, description: str = "",
@@ -154,6 +112,7 @@ class InvestigationService:
         self.store.append_diary(case, "ingest", text, actor="system",
                                 evidence_ids=result.added_evidence_ids)
         self._index_cache.pop(case.case_id, None)
+        self._analytics_results.pop(case.case_id, None)
         return {
             "case_id": case.case_id,
             "added": result.added_evidence_ids,
@@ -220,6 +179,7 @@ class InvestigationService:
             structuring_threshold=self.config.structuring_threshold,
         )
         res = pipe.run(paths, with_models=True)
+        self._analytics_results[case.case_id] = res
         index = self.build_index(case, force=True)
 
         # map pipeline entity ids onto case entity ids
@@ -456,14 +416,445 @@ class InvestigationService:
         self.store.save_case(case)
         return case
 
+    def _finish_answer(self, case: Case, question: str, answer: Answer) -> Answer:
+        self.store.append_diary(
+            case, "query",
+            t("diary.query", case.language, language=answer.language, intent=answer.intent,
+              query=question, n=len(answer.citations) or len(answer.hits)),
+            actor="analyst",
+        )
+        if answer.intent == "report" and answer.data.get("report_files"):
+            files = answer.data["report_files"]
+            self.store.append_diary(
+                case, "export",
+                t("diary.report", case.language,
+                  path=files.get("md") or files.get("html") or ""),
+                actor="analyst",
+            )
+        return answer
+
+    # -- agentic tools -----------------------------------------------------
+    def _run_tool(self, case: Case, index: EvidenceIndex, plan: QueryPlan,
+                  question: str, lang: str) -> Answer:
+        if plan.intent == "run_analysis":
+            return self._tool_run_analysis(case, index, plan, lang)
+        if plan.intent == "recheck":
+            return self._tool_recheck(case, index, plan, lang)
+        if plan.intent == "plot":
+            return self._tool_plot(case, index, plan, lang)
+        if plan.intent == "deep_dive":
+            return self._tool_deep_dive(case, index, plan, lang)
+        if plan.intent == "generate_image":
+            return self._tool_generate_image(case, index, plan, lang)
+        return Answer(answer="Unsupported tool request.", intent=plan.intent,
+                      language=lang, confidence=0.2)
+
+    @staticmethod
+    def _decode_image(data_url: str) -> Optional[bytes]:
+        import base64
+        try:
+            if data_url.startswith("data:"):
+                _, encoded = data_url.split(",", 1)
+                return base64.b64decode(encoded)
+            return base64.b64decode(data_url)
+        except Exception:
+            return None
+
+    def _tool_vision(self, case: Case, question: str, images: List[str],
+                     lang: str) -> Answer:
+        if not self.llm.available:
+            return Answer(
+                answer=("**Image analysis unavailable**\n\nThe vision model is not "
+                        "configured. Add the Cloudflare Workers AI credentials to `.env`."),
+                intent="vision", language=lang, confidence=0.2,
+            )
+        out_dir = self.store.reports_dir(case) / "chat"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        image_records = []
+        descriptions = []
+        for idx, data_url in enumerate(images[:3], 1):
+            raw = self._decode_image(data_url)
+            if raw:
+                ext = "jpg" if raw[:2] == b"\xff\xd8" else "png"
+                path = out_dir / f"upload_{stamp}_{idx}.{ext}"
+                path.write_bytes(raw)
+                rel = path.relative_to(Path(case.root)).as_posix()
+                image_records.append({
+                    "kind": "upload",
+                    "path": str(path),
+                    "url": f"/files/{case.case_id}/{rel}",
+                    "caption": f"Uploaded image {idx}",
+                })
+            description = self.llm.describe_image(data_url, question, lang=lang)
+            if description:
+                descriptions.append((idx, description))
+        if not descriptions:
+            return Answer(
+                answer=("**Image analysis failed**\n\nThe vision model could not read "
+                        "the uploaded image. Check the file format and try again."),
+                intent="vision", language=lang, confidence=0.2,
+                images=image_records,
+            )
+        lines = [
+            "**Image analysis (vision model)**",
+            "",
+            "*Model observation — verify against the original evidence. "
+            "This is not a forensic conclusion.*",
+            "",
+        ]
+        for idx, description in descriptions:
+            if len(descriptions) > 1:
+                lines.append(f"**Image {idx}**")
+            lines.append(description)
+            lines.append("")
+        return Answer(
+            answer="\n".join(lines), intent="vision", language=lang,
+            images=image_records, confidence=0.7,
+            data={"vision_model": self.llm.config.model},
+        )
+
+    def _tool_generate_image(self, case: Case, index: EvidenceIndex,
+                             plan: QueryPlan, lang: str) -> Answer:
+        if not self.llm.available:
+            return Answer(
+                answer=("**Image generation unavailable**\n\nThe image model is not "
+                        "configured. Add the Cloudflare Workers AI credentials to `.env`."),
+                intent="generate_image", language=lang, confidence=0.2,
+            )
+        prompt = (plan.image_prompt or plan.raw or "").strip()
+        if not prompt:
+            return Answer(answer="**Image generation needs a prompt.**",
+                          intent="generate_image", language=lang, confidence=0.2)
+        image_bytes = self.llm.generate_image(prompt)
+        if not image_bytes:
+            return Answer(
+                answer=("**Image generation failed**\n\nThe model did not return an "
+                        "image. Try a shorter or more specific prompt."),
+                intent="generate_image", language=lang, confidence=0.2,
+            )
+        out_dir = self.store.reports_dir(case) / "chat"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        ext = "jpg" if image_bytes[:2] == b"\xff\xd8" else "png"
+        path = out_dir / f"generated_{stamp}.{ext}"
+        path.write_bytes(image_bytes)
+        rel = path.relative_to(Path(case.root)).as_posix()
+        image = {
+            "kind": "generated",
+            "path": str(path),
+            "url": f"/files/{case.case_id}/{rel}",
+            "caption": f"Generated illustration — {prompt[:90]}",
+        }
+        text = (
+            "**Generated illustration**\n\n"
+            f"**Prompt:** {prompt}\n\n"
+            f"Generated with `{self.llm.config.image_model}`. "
+            "This is a synthetic illustration, not evidence."
+        )
+        return Answer(answer=text, intent="generate_image", language=lang,
+                      images=[image], confidence=0.8,
+                      data={"prompt": prompt, "model": self.llm.config.image_model})
+
+    def _synthetic_result(self, case: Case, index: EvidenceIndex):
+        """Build a chart-compatible PipelineResult from the case index."""
+        from types import SimpleNamespace
+        from .pipeline import PipelineResult
+        from .schema import SourceResolved
+
+        rankings = [
+            {"entity_id": eid, "score": float(ent.risk_score),
+             "n_events": int(ent.n_events), "models_fired": []}
+            for eid, ent in case.entities.items()
+        ]
+        entity_map = SimpleNamespace(
+            entity_names={eid: set(ent.names) for eid, ent in case.entities.items()},
+            entity_id_by_identifier={},
+            name_to_entity={},
+        )
+        per_source = [
+            SourceResolved(source=item.source_type, file=item.path,
+                           resolved_fields=set(), n_rows=item.n_rows,
+                           n_entities=0)
+            for item in case.evidence
+        ]
+        return PipelineResult(unified=index.events, per_source=per_source,
+                              sufficiency={}, entity_map=entity_map,
+                              rankings=rankings)
+
+    def _result_for_charts(self, case: Case, index: EvidenceIndex):
+        res = self._analytics_results.get(case.case_id)
+        if res is not None:
+            return res, ""
+        structured = [i for i in case.evidence
+                      if i.source_type in ("bank", "cdr", "social")]
+        if structured:
+            result = self.analyze(case.case_id, run_report=False)
+            res = self._analytics_results.get(case.case_id)
+            if res is not None:
+                return res, ""
+            return None, result.get("error", "Analytics could not run.")
+        return self._synthetic_result(case, index), ""
+
+    def _render_chart(self, case: Case, res, kind: str, entity_id: str = "") -> Optional[dict]:
+        from . import visuals
+
+        out_dir = self.store.reports_dir(case) / "chat"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        if kind == "map":
+            path = visuals.render_location_map(res, out_dir, name=f"chat_map_{stamp}.png")
+            caption = "Activity map — locations & tower telemetry"
+        elif kind == "timeline":
+            path = visuals.render_timeline(res, out_dir, name=f"chat_timeline_{stamp}.png")
+            caption = "Daily traffic timeline"
+        elif kind == "entity_timeline":
+            eid = entity_id or next(iter(case.entities), "")
+            if not eid:
+                return None
+            ent = case.entities.get(eid)
+            name = ent.display_name if ent else eid
+            path = visuals.render_entity_timeline(
+                res, out_dir, eid, name=f"chat_entity_{eid}_{stamp}.png")
+            caption = f"Activity timeline — {name} ({eid})"
+        elif kind == "people":
+            path = visuals.render_person_attention(
+                res, out_dir, name=f"chat_people_{stamp}.png")
+            caption = "People who stand out"
+        elif kind == "sources":
+            path = visuals.render_sources(res, out_dir, name=f"chat_sources_{stamp}.png")
+            caption = "Evidence sources"
+        elif kind == "models":
+            if not getattr(res, "model_scores", None):
+                return None
+            path = visuals.render_model_scores(
+                res, out_dir, name=f"chat_models_{stamp}.png")
+            caption = "Detection engine scores"
+        else:
+            path = visuals.render_correlation_graph(
+                res, out_dir, name=f"chat_network_{stamp}.png",
+                tol_minutes=self.config.tol_minutes)
+            caption = "Suspect correlation graph"
+        rel = path.relative_to(Path(case.root)).as_posix()
+        return {"kind": kind, "path": str(path),
+                "url": f"/files/{case.case_id}/{rel}", "caption": caption}
+
+    def _citations_from_hits(self, index: EvidenceIndex, hits: List[dict],
+                             limit: int = 6) -> List[Citation]:
+        from .retrieval import HybridRetriever
+        retriever = HybridRetriever(index)
+        out: List[Citation] = []
+        seen = set()
+        for hit in hits:
+            citation = retriever.citation_for_hit(hit)
+            if citation is None:
+                continue
+            key = (citation.evidence_id, citation.event_id, citation.chunk_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(citation)
+            if len(out) >= limit:
+                break
+        return out
+
+    def _tool_plot(self, case: Case, index: EvidenceIndex, plan: QueryPlan,
+                   lang: str) -> Answer:
+        kind = plan.chart_kind or "network"
+        res, error = self._result_for_charts(case, index)
+        if res is None:
+            return Answer(answer=f"**Chart unavailable**\n\n{error}", intent="plot",
+                          language=lang, confidence=0.3,
+                          data={"chart_kind": kind})
+        entity_id = plan.entity_ids[0] if plan.entity_ids else ""
+        image = self._render_chart(case, res, kind, entity_id=entity_id)
+        if image is None:
+            return Answer(
+                answer=("**Chart unavailable**\n\nI could not render that chart "
+                        "from the current evidence. Run the analysis first, then try again."),
+                intent="plot", language=lang, confidence=0.3,
+                data={"chart_kind": kind},
+            )
+        text = (
+            f"**Generated chart — {image['caption']}**\n\n"
+            f"Rendered from the current case evidence at {utc_now()}. "
+            "The image is shown below; the same chart is available in the case report."
+        )
+        return Answer(answer=text, intent="plot", language=lang, confidence=0.92,
+                      images=[image], data={"chart_kind": kind, "image": image})
+
+    def _tool_run_analysis(self, case: Case, index: EvidenceIndex, plan: QueryPlan,
+                           lang: str) -> Answer:
+        result = self.analyze(case.case_id)
+        if not result.get("ok"):
+            return Answer(answer=f"**Analysis could not run**\n\n{result.get('error')}",
+                          intent="run_analysis", language=lang, confidence=0.3,
+                          data={"analysis": result})
+        case = self.load_case(case.case_id)
+        index = self.build_index(case, force=True)
+        lines = [
+            "**Analysis rerun complete.**",
+            "",
+            f"- models run: {', '.join(result.get('models', [])) or '—'}",
+            f"- findings: **{result.get('findings', 0)}**",
+            f"- recommendations: **{result.get('recommendations', 0)}**",
+            "",
+            "| model | verdict |",
+            "|---|---|",
+        ]
+        for model, status in sorted(result.get("sufficiency", {}).items()):
+            lines.append(f"| {model} | {status} |")
+        rankings = result.get("top_rankings", [])[:8]
+        if rankings:
+            lines += ["", "**Top ranked entities**", "",
+                      "| rank | entity | score | fired |",
+                      "|---|---|---|---|"]
+            for i, row in enumerate(rankings, 1):
+                lines.append(
+                    f"| {i} | {row.get('entity_id', '')} | {row.get('score', 0):.3f} | "
+                    f"{', '.join(row.get('models_fired', [])) or '—'} |"
+                )
+        if case.findings:
+            lines += ["", "**Top findings**", ""]
+            for finding in case.findings[:5]:
+                lines.append(f"- [{finding.severity}] {finding.title}")
+        citations = []
+        for finding in case.findings[:3]:
+            citations.extend(finding.citations)
+        seen = set()
+        unique_citations = []
+        for citation in citations:
+            key = (citation.evidence_id, citation.event_id, citation.chunk_id)
+            if key not in seen:
+                seen.add(key)
+                unique_citations.append(citation)
+        analytics_res = self._analytics_results.get(case.case_id)
+        image = self._render_chart(case, analytics_res, "network") if analytics_res is not None else None
+        artifacts = []
+        report_files = (case.metadata.get("analytics") or {}).get("report_files", {}) or {}
+        for label, key in (("Analytics report (HTML)", "html"),
+                           ("Analytics report (PDF)", "pdf")):
+            path = report_files.get(key)
+            if path and Path(path).exists():
+                rel = Path(path).resolve().relative_to(Path(case.root).resolve()).as_posix()
+                artifacts.append({"label": label, "path": str(path),
+                                  "url": f"/files/{case.case_id}/{rel}"})
+        return Answer(
+            answer="\n".join(lines), intent="run_analysis", language=lang,
+            citations=unique_citations[:8],
+            images=[image] if image else [],
+            artifacts=artifacts,
+            confidence=0.95,
+            data={"analysis": result},
+        )
+
+    def _tool_recheck(self, case: Case, index: EvidenceIndex, plan: QueryPlan,
+                      lang: str) -> Answer:
+        agg = index.aggregate(plan)
+        if agg["count"] == 0:
+            return Answer(
+                answer="**Recomputed numbers**\n\nNo indexed events match that request.",
+                intent="recheck", language=lang, confidence=0.25,
+                data={"aggregate": agg},
+            )
+        lines = [
+            "**Recomputed numbers — from the current evidence index.**",
+            "",
+            f"*Recomputed at {utc_now()} from {agg['count']:,} matching event(s).*",
+            "",
+            "| metric | value |",
+            "|---|---|",
+            f"| matching events | {agg['count']:,} |",
+            f"| total amount | {agg['total']:,.2f} |",
+            f"| average amount | {agg['avg']:,.2f} |",
+            f"| smallest amount | {agg['min']:,.2f} |",
+            f"| largest amount | {agg['max']:,.2f} |",
+        ]
+        if agg.get("by_source"):
+            lines.append(f"| by source | {', '.join(f'{k}: {v:,}' for k, v in agg['by_source'].items())} |")
+        if agg.get("by_direction"):
+            lines.append(f"| by direction | {', '.join(f'{k}: {v:,}' for k, v in agg['by_direction'].items())} |")
+        citations = self._citations_from_hits(index, agg.get("hits", []))
+        lines += ["", "The numbers above are recomputed from the indexed events, "
+                      "not copied from the previous report."]
+        return Answer(answer="\n".join(lines), intent="recheck", language=lang,
+                      citations=citations, hits=agg.get("hits", []),
+                      confidence=0.9, data={"aggregate": agg})
+
+    def _tool_deep_dive(self, case: Case, index: EvidenceIndex, plan: QueryPlan,
+                        lang: str) -> Answer:
+        text = (plan.raw or "").lower()
+        if "structur" in text:
+            model = "structuring"
+        elif "chain" in text or "layer" in text:
+            model = "chain"
+        elif "network" in text or "hub" in text or "fan" in text:
+            model = "network"
+        elif "time" in text or "call" in text or "transfer" in text:
+            model = "time_correlation"
+        elif "stat" in text or "outlier" in text or "anomaly" in text:
+            model = "statml"
+        else:
+            model = "network"
+        from .models import run_model
+        scores = run_model(
+            model, index.events,
+            tolerance_minutes=self.config.tol_minutes,
+            structuring_threshold=self.config.structuring_threshold,
+        )
+        top = sorted(scores.items(), key=lambda kv: -kv[1])[:10]
+        lines = [
+            f"**Deep dive — {model} model**",
+            "",
+            f"Scored **{len(scores)}** entities from the current evidence index. "
+            "This is a fresh model run, not a copy of the previous report.",
+        ]
+        citations: List[Citation] = []
+        if top:
+            lines += ["", "| entity | name | score |", "|---|---|---|"]
+            for eid, score in top:
+                ent = case.entities.get(str(eid))
+                name = ent.display_name if ent else str(eid)
+                lines.append(f"| {eid} | {name} | {score:.3f} |")
+            focus = plan.entity_ids[0] if plan.entity_ids else str(top[0][0])
+            if focus in case.entities:
+                from .summarize import entity_dossier
+                dossier = entity_dossier(case, index, focus, lang=lang)
+                if dossier:
+                    lines += ["", dossier["text"]]
+                    citations = [Citation.from_dict(c) for c in dossier.get("citations", [])]
+            if not citations:
+                citations = self._citations_from_hits(
+                    index, index.search_events(plan, top_k=5))
+        else:
+            lines += ["", "The model returned no scores for the current evidence."]
+        if plan.entity_ids:
+            chart_res, _chart_error = self._result_for_charts(case, index)
+            image = (self._render_chart(case, chart_res, "entity_timeline",
+                                        entity_id=plan.entity_ids[0])
+                     if chart_res is not None else None)
+        else:
+            image = None
+        return Answer(answer="\n".join(lines), intent="deep_dive", language=lang,
+                      citations=citations[:8], images=[image] if image else [],
+                      confidence=0.85, data={"model": model, "scores": dict(top)})
+
     def ask(self, case_id: str, question: str, lang: Optional[str] = None,
-            session_id: str = "default") -> Answer:
+            session_id: str = "default", images: Optional[List[str]] = None) -> Answer:
         case = self.load_case(case_id)
         index = self.build_index(case)
+        target_lang = normalize_language(lang or case.language)
+        if images:
+            answer = self._tool_vision(case, question, images, target_lang)
+            return self._finish_answer(case, question, answer)
         assistant = ForensicAssistant(case, index, lang=lang or case.language,
                                       llm=self.llm,
                                       min_events=self.config.min_events_per_entity)
         plan = assistant.parser.parse(question, lang=lang or case.language)
+        if plan.intent in ("run_analysis", "recheck", "plot", "deep_dive",
+                           "generate_image"):
+            answer = self._run_tool(case, index, plan, question, target_lang)
+            return self._finish_answer(case, question, answer)
         if self._maybe_analyze(case, plan):
             case = self.load_case(case_id)
             index = self.build_index(case, force=True)
@@ -487,22 +878,7 @@ class InvestigationService:
         context = self._sessions.get(key) or SessionContext(language=case.language)
         answer = assistant.ask(question, lang=lang or case.language, context=context)
         self._sessions[key] = context
-        # diary: query + result count
-        self.store.append_diary(
-            case, "query",
-            t("diary.query", case.language, language=answer.language, intent=answer.intent,
-              query=question, n=len(answer.citations) or len(answer.hits)),
-            actor="analyst",
-        )
-        if answer.intent == "report" and answer.data.get("report_files"):
-            files = answer.data["report_files"]
-            self.store.append_diary(
-                case, "export",
-                t("diary.report", case.language,
-                  path=files.get("md") or files.get("html") or ""),
-                actor="analyst",
-            )
-        return answer
+        return self._finish_answer(case, question, answer)
 
     # -- summaries / views -------------------------------------------------
     def summarize(self, case_id: str, lang: Optional[str] = None) -> dict:

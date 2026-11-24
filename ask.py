@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from investigation.i18n import SUPPORTED_LANGUAGES  # noqa: E402
+from aml.i18n import SUPPORTED_LANGUAGES  # noqa: E402
 
 
 def main() -> int:
@@ -27,6 +27,8 @@ def main() -> int:
     ap.add_argument("--lang", default=None, choices=SUPPORTED_LANGUAGES,
                     help="answer language (default: case language)")
     ap.add_argument("--question", default="", help="ask one question and exit")
+    ap.add_argument("--image", action="append", default=[],
+                    help="attach an image for vision analysis (repeatable)")
     args = ap.parse_args()
 
     from run_case import main as run_main
@@ -34,7 +36,10 @@ def main() -> int:
     if args.lang:
         common += ["--lang", args.lang]
     if args.question:
-        return run_main(common + ["ask", args.case, args.question])
+        command = common + ["ask", args.case, args.question]
+        for image in args.image:
+            command += ["--image", image]
+        return run_main(command)
     return run_main(common + ["chat", args.case])
 
 

@@ -97,6 +97,8 @@ class QueryPlan:
     direction: Optional[str] = None
     location_terms: List[str] = field(default_factory=list)
     keywords: List[str] = field(default_factory=list)
+    chart_kind: str = ""
+    image_prompt: str = ""
     limit: int = 20
     wants_citations: bool = True
     ambiguous: List[dict] = field(default_factory=list)
@@ -305,6 +307,10 @@ class Answer:
     followups: List[str] = field(default_factory=list)
     data: Dict[str, Any] = field(default_factory=dict)
     query_plan: Dict[str, Any] = field(default_factory=dict)
+    # Generated artefacts the chat can render inline (images) or offer as
+    # downloads (reports, CSV exports, etc.).
+    images: List[Dict[str, Any]] = field(default_factory=list)
+    artifacts: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -317,6 +323,8 @@ class Answer:
             "followups": self.followups,
             "data": self.data,
             "query_plan": self.query_plan,
+            "images": self.images,
+            "artifacts": self.artifacts,
         }
 
     @classmethod

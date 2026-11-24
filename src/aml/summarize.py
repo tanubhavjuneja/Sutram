@@ -16,7 +16,7 @@ import pandas as pd
 
 from .i18n import t
 from .index import EvidenceIndex
-from .models import Case, QueryPlan
+from .case import Case, QueryPlan
 
 _SOURCE_ORDER = ["bank", "cdr", "social", "email", "chat", "document", "image", "note", "other"]
 

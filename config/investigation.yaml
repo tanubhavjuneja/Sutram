@@ -12,11 +12,15 @@ investigation:
   top_k: 10
   max_findings: 25
 
-  # Optional grounded LLM polish. Default is fully offline ("none").
-  # Supported: none | openai | ollama
-  # For OpenAI-compatible endpoints set INVESTIGATION_LLM_API_KEY and
-  # INVESTIGATION_LLM_BASE_URL (or OPENAI_API_KEY / OPENAI_BASE_URL).
-  llm_provider: "none"
-  llm_model: ""
+  # LLM provider: cloudflare | openai | ollama | none.
+  # Cloudflare credentials are read from .env:
+  #   Account ID=...   (or CLOUDFLARE_ACCOUNT_ID)
+  #   API KEY=...      (or CLOUDFLARE_API_TOKEN)
+  # The vision model reads uploaded images; the text model polishes grounded
+  # answers; the image model generates illustrations on request.
+  llm_provider: "cloudflare"
+  llm_model: "@cf/meta/llama-3.2-11b-vision-instruct"
+  llm_text_model: "@cf/meta/llama-3.1-8b-instruct"
+  llm_image_model: "@cf/black-forest-labs/flux-1-schnell"
   llm_base_url: ""
-  llm_timeout: 30
+  llm_timeout: 120

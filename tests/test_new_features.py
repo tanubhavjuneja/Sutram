@@ -104,13 +104,13 @@ def test_report_contains_new_views(synthetic_dir, tmp_path):
     written = generate_report(res, PipelineConfig(), tmp_path)
 
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
-    assert "Who the flagged people are connected to" in md
-    assert "The activity map" in md
+    assert "Suspect correlation graph" in md
+    assert "Activity map" in md
     assert "A closer look at the people who stand out" in md
 
     html = (tmp_path / "report.html").read_text(encoding="utf-8")
-    assert "Who the flagged people are connected to" in html
-    assert "The activity map" in html
+    assert "Suspect correlation graph" in html
+    assert "Activity map" in html
 
     charts = {p.name for p in (tmp_path / "charts").glob("*.png")}
     assert "network.png" in charts

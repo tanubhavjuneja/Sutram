@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 from .i18n import t
 from .index import EvidenceIndex
 from .llm import LLMClient
-from .models import Answer, Case, Citation, QueryPlan
+from .case import Answer, Case, Citation, QueryPlan
 from .query import QueryParser
 from .recommend import recommendation_summary
 from .retrieval import HybridRetriever

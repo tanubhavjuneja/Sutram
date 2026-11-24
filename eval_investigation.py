@@ -31,8 +31,8 @@ sys.path.insert(0, str(ROOT / "src"))
 import os
 os.environ.setdefault("AML_SKIP_TORCH", "1")
 
-from investigation import InvestigationService  # noqa: E402
-from investigation.config_loader import load_config  # noqa: E402
+from aml.service import InvestigationService  # noqa: E402
+from aml.config import load_config  # noqa: E402
 
 
 def _json_text(value) -> str:

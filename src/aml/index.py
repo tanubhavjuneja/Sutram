@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from .i18n import STOPWORDS, normalize_text
-from .models import Case, Chunk, Citation, Entity, QueryPlan
+from .case import Case, Chunk, Citation, Entity, QueryPlan
 
 # universal stopword set for search (English is the common denominator; other
 # languages' content words are deliberately kept so multilingual queries work)

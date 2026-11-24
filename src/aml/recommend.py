@@ -21,7 +21,7 @@ import pandas as pd
 
 from .i18n import t
 from .index import EvidenceIndex, _safe_ts
-from .models import Case, Finding, Recommendation
+from .case import Case, Finding, Recommendation
 from .summarize import evidence_gaps
 
 _PRIORITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}

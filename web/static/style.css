@@ -177,8 +177,74 @@ select:focus, textarea:focus, input:focus { border-color: var(--amber); }
 .numline { margin: 4px 0; padding-left: 4px; }
 .cite-line { font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 2px 0; }
 .thinking { color: var(--hint); font-family: var(--mono); font-size: 11px; }
+
+/* markdown tables inside chat bubbles */
+.bubble .md-table {
+  border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px;
+  font-family: var(--sans);
+}
+.bubble .md-table th, .bubble .md-table td {
+  border: 1px solid var(--border); padding: 5px 8px; text-align: left;
+}
+.bubble .md-table th {
+  background: var(--panel-2); color: var(--amber); font-family: var(--mono);
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.8px;
+}
+.bubble .md-table tr:nth-child(even) td { background: rgba(56, 189, 248, 0.04); }
+
+/* generated images + downloadable artefacts */
+.answer-images {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px; margin-top: 12px;
+}
+.answer-images figure {
+  border: 1px solid var(--border); background: var(--panel-2); padding: 6px;
+  margin: 0;
+}
+.answer-images img {
+  width: 100%; height: auto; display: block; border: 1px solid var(--border-soft);
+  background: var(--panel);
+}
+.answer-images figcaption {
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  padding-top: 6px; line-height: 1.4;
+}
+.artifacts {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-soft);
+}
+.artifacts .label {
+  font-family: var(--mono); font-size: 9px; color: var(--hint);
+  text-transform: uppercase; letter-spacing: 1px; width: 100%;
+}
+.artifacts a {
+  color: var(--amber); text-decoration: none; border: 1px solid rgba(255,176,0,0.4);
+  padding: 4px 8px; font-family: var(--mono); font-size: 10px;
+}
+.artifacts a:hover { background: rgba(255,176,0,0.08); }
 .composer { border-top: 1px solid var(--border); padding: 12px 22px 14px; background: rgba(2, 6, 23, 0.6); }
 .suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+.attach-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.attach-row .muted { font-size: 10px; }
+.image-preview { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.image-chip {
+  position: relative; border: 1px solid var(--border); background: var(--panel);
+  padding: 4px; width: 126px;
+}
+.image-chip img { width: 100%; height: 72px; object-fit: cover; display: block; }
+.image-chip span {
+  display: block; font-size: 9px; color: var(--muted); padding-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chip-remove {
+  position: absolute; top: 2px; right: 2px; background: rgba(2, 6, 23, 0.85);
+  color: var(--red); border: 1px solid var(--red); width: 18px; height: 18px;
+  font-size: 10px; line-height: 1; padding: 0;
+}
+.user-attachment {
+  max-width: 240px; max-height: 170px; display: block; margin-top: 8px;
+  border: 1px solid var(--border);
+}
 .chip {
   border: 1px solid var(--border); background: var(--panel); color: var(--muted);
   padding: 5px 9px; font-size: 11px; text-align: left;

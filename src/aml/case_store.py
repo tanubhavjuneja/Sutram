@@ -26,7 +26,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from . import diary
-from .models import Case, Chunk, Entity, EvidenceItem, slugify, utc_now
+from .case import Case, Chunk, Entity, EvidenceItem, slugify, utc_now
 
 CASE_ROOT_DEFAULT = "data/cases"
 CHUNK_FILE = "chunks.jsonl"

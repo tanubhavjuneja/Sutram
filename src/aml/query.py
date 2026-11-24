@@ -35,12 +35,17 @@ from .i18n import (
     normalize_text,
     strip_language_request,
 )
-from .models import AmountRange, QueryPlan, TimeRange
+from .case import AmountRange, QueryPlan, TimeRange
 
 # intent priority when scores tie (higher wins)
 _INTENT_PRIORITY = {
     "report": 100,
+    "generate_image": 97,
     "diary": 95,
+    "plot": 94,
+    "run_analysis": 93,
+    "recheck": 92,
+    "deep_dive": 91,
     "recommend": 90,
     "summarize": 85,
     "anomaly": 80,
@@ -262,6 +267,9 @@ class QueryParser:
             sources, locations,
         )
         event_types = self._event_types_for_sources(sources)
+        chart_kind = self._extract_chart_kind(norm, entity_ids)
+        image_prompt = (self._extract_image_prompt(working)
+                        if intent == "generate_image" else "")
 
         notes = list(intent_notes)
         if ambiguous:
@@ -285,6 +293,8 @@ class QueryParser:
             direction=direction,
             location_terms=locations,
             keywords=keywords,
+            chart_kind=chart_kind,
+            image_prompt=image_prompt,
             limit=limit,
             ambiguous=ambiguous,
             notes=notes,
@@ -314,9 +324,37 @@ class QueryParser:
             ("diary", 1.0), ("report", 1.0), ("timeline", 0.6),
             ("relationship", 0.6), ("entity_profile", 0.5),
             ("evidence_inventory", 0.6), ("entity_list", 0.4),
+            ("plot", 2.0), ("run_analysis", 2.0), ("recheck", 2.0),
+            ("deep_dive", 2.0), ("generate_image", 2.0),
         ):
             if scores.get(intent):
                 scores[intent] += boost
+
+        # explicit tool intents: these should beat generic search words
+        if _contains_any(norm, ["generate an image", "create an image",
+                                "make an image", "draw an image",
+                                "draw a picture", "make a picture",
+                                "generate a picture", "illustrate",
+                                "text to image", "text-to-image",
+                                "render an image", "generate a visual"]):
+            scores["generate_image"] = scores.get("generate_image", 0.0) + 6.0
+        if _contains_any(norm, ["plot", "chart", "graph", "visualize", "visualise",
+                                "draw", "diagram", "map", "heatmap"]):
+            scores["plot"] = scores.get("plot", 0.0) + 5.0
+        if _contains_any(norm, ["rerun", "re-run", "run again", "run the analysis",
+                                "run analysis", "refresh analysis", "reanalyze",
+                                "re-analyze", "run the models", "run tests",
+                                "run checks", "recompute"]):
+            scores["run_analysis"] = scores.get("run_analysis", 0.0) + 5.0
+        if _contains_any(norm, ["recheck", "re-check", "recalculate", "re-calculate",
+                                "verify the numbers", "check the numbers",
+                                "double-check", "double check"]):
+            scores["recheck"] = scores.get("recheck", 0.0) + 5.0
+        if _contains_any(norm, ["deep dive", "dig deeper", "analyze further",
+                                "analyse further", "investigate further",
+                                "run a model", "check for structuring",
+                                "check for layering", "look deeper"]):
+            scores["deep_dive"] = scores.get("deep_dive", 0.0) + 5.0
 
         # explicit priority rules (they encode product decisions, not just words)
         if _contains(norm, "report") and _contains_any(
@@ -840,6 +878,51 @@ class QueryParser:
                 keywords.append(tok)
         # keep the most discriminative tokens first; cap at 12
         return keywords[:12]
+
+    def _extract_image_prompt(self, text: str) -> str:
+        """Strip the 'generate an image of ...' wrapper to get the prompt."""
+        prompt = text or ""
+        for trigger in (
+            "generate an image of", "generate an image", "create an image of",
+            "create an image", "make an image of", "make an image",
+            "draw an image of", "draw an image", "draw a picture of",
+            "draw a picture", "make a picture of", "make a picture",
+            "generate a picture of", "generate a picture", "illustrate",
+            "text to image", "text-to-image", "render an image of",
+            "render an image", "generate a visual of", "generate a visual",
+            "छवि बनाएं", "तस्वीर बनाएं", "चित्र बनाएं",
+            "generar una imagen", "crear una imagen", "dibujar una imagen",
+            "générer une image", "créer une image", "dessiner une image",
+            "bild generieren", "bild erstellen", "gerar uma imagem",
+            "criar uma imagem", "desenhar uma imagem",
+        ):
+            prompt = re.sub(rf"(?i)\b{re.escape(trigger)}\b", " ", prompt)
+        prompt = re.sub(r"^\s*(of|for|about|showing|with|depicting)\s+", "",
+                        prompt, flags=re.IGNORECASE)
+        prompt = re.sub(r"\s+", " ", prompt).strip(" .,:;")
+        return prompt or (text or "").strip()
+
+    def _extract_chart_kind(self, norm: str, entity_ids: List[str]) -> str:
+        """Pick the chart the user is asking for (used by the plot tool)."""
+        if _contains_any(norm, ["map", "activity map", "location map"]):
+            return "map"
+        if _contains_any(norm, ["network", "correlation", "connection graph",
+                                "suspect graph", "graph"]):
+            if _contains_any(norm, ["timeline", "traffic", "over time"]):
+                return "entity_timeline" if entity_ids else "timeline"
+            return "network"
+        if _contains_any(norm, ["timeline", "traffic", "activity over time",
+                                "daily traffic"]):
+            return "entity_timeline" if entity_ids else "timeline"
+        if _contains_any(norm, ["people", "risk bar", "who stands out", "attention"]):
+            return "people"
+        if _contains_any(norm, ["sources", "ingestion", "files"]):
+            return "sources"
+        if _contains_any(norm, ["models", "engine", "scores"]):
+            return "models"
+        if entity_ids:
+            return "entity_timeline"
+        return "network"
 
     def _event_types_for_sources(self, sources: List[str]) -> List[str]:
         mapping = {

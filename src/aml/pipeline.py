@@ -6,7 +6,7 @@ produces ranked insights with explanations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -31,6 +31,17 @@ class PipelineResult:
     explanations: Dict[str, str] = field(default_factory=dict)
     model_scores: Dict[str, Dict[str, float]] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    # Optional investigation-workspace fields.  The analytics-only pipeline
+    # leaves these empty; CasePipeline populates them so callers can consume
+    # one result object for both anomaly analytics and case investigation.
+    case: Any = None
+    evidence: List[Any] = field(default_factory=list)
+    chunks: List[Any] = field(default_factory=list)
+    index: Any = None
+    findings: List[Any] = field(default_factory=list)
+    recommendations: List[Any] = field(default_factory=list)
+    summary: Dict[str, Any] = field(default_factory=dict)
+    diary: List[Any] = field(default_factory=list)
 
 
 class Pipeline:
@@ -155,3 +166,105 @@ class Pipeline:
                   "top2": _m.fuse_model_scores}[self.fusion]
             return fn(scores, df)
         return _m.fuse_rank_borda(scores, df)
+
+
+class CasePipeline(Pipeline):
+    """Pipeline facade for the case workspace.
+
+    The analytics core stays exactly as it was; this class adds the case
+    lifecycle, evidence ingestion, retrieval, assistant, recommendations,
+    diary and report methods as part of the same ``aml`` package and the same
+    public pipeline entry point.
+    """
+
+    def __init__(self, case_root: str = "data/cases", investigation_config=None,
+                 **kwargs):
+        super().__init__(**kwargs)
+        from .config import InvestigationConfig
+        from .service import InvestigationService
+        cfg = investigation_config or InvestigationConfig(case_root=case_root)
+        if case_root and not cfg.case_root:
+            cfg.case_root = case_root
+        self.service = InvestigationService(case_root=cfg.case_root, config=cfg)
+
+    # -- case lifecycle ----------------------------------------------------
+    def create_case(self, title: str, description: str = "", language: str = "en"):
+        return self.service.create_case(title, description=description, language=language)
+
+    def load_case(self, case_id: str):
+        return self.service.load_case(case_id)
+
+    def list_cases(self):
+        return self.service.list_cases()
+
+    def ingest_case(self, case_id: str, paths: Sequence[str], custodian: str = "",
+                    notes: str = ""):
+        return self.service.ingest(case_id, paths, custodian=custodian, notes=notes)
+
+    def analyze_case(self, case_id: str, run_report: bool = True):
+        return self.service.analyze(case_id, run_report=run_report)
+
+    # -- conversation / retrieval -----------------------------------------
+    def ask(self, case_id: str, question: str, lang: Optional[str] = None,
+            session_id: str = "default", images: Optional[List[str]] = None):
+        return self.service.ask(case_id, question, lang=lang,
+                                session_id=session_id, images=images)
+
+    def search(self, case_id: str, question: str, lang: Optional[str] = None):
+        case = self.service.load_case(case_id)
+        index = self.service.build_index(case)
+        parser = self.service._parser_for(case, index, lang)
+        plan = parser.parse(question, lang=lang or case.language)
+        from .retrieval import HybridRetriever
+        return HybridRetriever(index).search(plan)
+
+    def summarize(self, case_id: str, lang: Optional[str] = None):
+        return self.service.summarize(case_id, lang=lang)
+
+    def recommend(self, case_id: str, lang: Optional[str] = None):
+        return self.service.recommend(case_id, lang=lang)
+
+    def report(self, case_id: str, lang: Optional[str] = None,
+               formats: Sequence[str] = ("md", "html", "json", "pdf")):
+        return self.service.report(case_id, lang=lang, formats=formats)
+
+    def diary(self, case_id: str, lang: Optional[str] = None):
+        return self.service.diary(case_id, lang=lang)
+
+    # -- convenience -------------------------------------------------------
+    def run_case(self, case_id: str, paths: Optional[Sequence[str]] = None,
+                 analyze: bool = True, report: bool = True,
+                 lang: Optional[str] = None):
+        """Ingest (optional), analyze and report; return the updated case."""
+        self.service.load_case(case_id)
+        if paths:
+            self.service.ingest(case_id, paths)
+        if analyze:
+            self.service.analyze(case_id, run_report=report)
+        if report:
+            self.service.report(case_id, lang=lang)
+        return self.service.load_case(case_id)
+
+    def run_case_result(self, case_id: str, paths: Optional[Sequence[str]] = None,
+                        analyze: bool = True, report: bool = True,
+                        lang: Optional[str] = None) -> PipelineResult:
+        """Return a unified PipelineResult containing analytics + case data."""
+        case = self.run_case(case_id, paths=paths, analyze=analyze,
+                             report=report, lang=lang)
+        index = self.service.build_index(case)
+        events = self.service.store.load_events(case)
+        summary = self.service.summarize(case_id, lang=lang)
+        return PipelineResult(
+            unified=events,
+            per_source=[],
+            sufficiency={},
+            entity_map=None,
+            case=case,
+            evidence=list(case.evidence),
+            chunks=list(index.chunks),
+            index=index,
+            findings=list(case.findings),
+            recommendations=list(case.recommendations),
+            summary=summary,
+            diary=list(case.diary),
+        )

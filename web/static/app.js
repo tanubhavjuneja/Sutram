@@ -11,6 +11,7 @@ const state = {
   sessionId: 'web-' + Math.random().toString(36).slice(2),
   activeTab: 'assistant',
   busy: false,
+  attachedImages: [],
 };
 
 const FALLBACK_SUGGESTIONS = [
@@ -106,8 +107,24 @@ function md(text) {
   const lines = escapeHtml(text || '').split('\n');
   let html = '';
   let inList = false;
-  for (const raw of lines) {
-    const line = raw.replace(/\s+$/, '');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/\s+$/, '');
+    // Markdown table: header row followed by a |---| separator row.
+    if (/^\s*\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
+      if (inList) { html += '</ul>'; inList = false; }
+      const cells = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '')
+        .split('|').map((c) => inlineMd(c.trim()));
+      html += '<table class="md-table"><thead><tr>' +
+        cells(line).map((c) => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+      i += 2;
+      while (i < lines.length && /^\s*\|/.test(lines[i])) {
+        html += '<tr>' + cells(lines[i]).map((c) => `<td>${c}</td>`).join('') + '</tr>';
+        i++;
+      }
+      i--;
+      html += '</tbody></table>';
+      continue;
+    }
     if (/^\s*[-•]\s+/.test(line)) {
       if (!inList) { html += '<ul>'; inList = true; }
       html += '<li>' + inlineMd(line.replace(/^\s*[-•]\s+/, '')) + '</li>';
@@ -234,7 +251,32 @@ function renderFollowups(followups) {
 }
 
 function renderAnswer(answer) {
-  addMessage('assistant', md(answer.answer));
+  const wrap = addMessage('assistant', md(answer.answer));
+  const bubble = wrap.querySelector('.bubble');
+  if (answer.images && answer.images.length) {
+    const gallery = document.createElement('div');
+    gallery.className = 'answer-images';
+    gallery.innerHTML = answer.images.map((img) => {
+      const url = img.url || img.path || '';
+      const caption = img.caption || img.kind || 'Generated chart';
+      return `<figure>
+        <a href="${escapeHtml(url)}" target="_blank" rel="noopener">
+          <img src="${escapeHtml(url)}" alt="${escapeHtml(caption)}" loading="lazy">
+        </a>
+        <figcaption>${escapeHtml(caption)}</figcaption>
+      </figure>`;
+    }).join('');
+    bubble.appendChild(gallery);
+  }
+  if (answer.artifacts && answer.artifacts.length) {
+    const arts = document.createElement('div');
+    arts.className = 'artifacts';
+    arts.innerHTML = '<div class="label">Generated files</div>' + answer.artifacts.map((a) => {
+      const url = a.url || a.path || '';
+      return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(a.label || a.path)}</a>`;
+    }).join('');
+    bubble.appendChild(arts);
+  }
   renderCitations(answer.citations);
   renderFollowups(answer.followups);
   $('#confidence').textContent = `${Math.round((answer.confidence || 0) * 100)}%`;
@@ -243,6 +285,8 @@ function renderAnswer(answer) {
     `intent: ${escapeHtml(answer.intent || '—')}`,
     `language: ${escapeHtml(answer.language || '—')}`,
     `citations: ${(answer.citations || []).length}`,
+    answer.images?.length ? `images: ${answer.images.length}` : '',
+    answer.artifacts?.length ? `files: ${answer.artifacts.length}` : '',
     plan.time_range?.start ? `from: ${escapeHtml(formatTime(plan.time_range.start))}` : '',
     plan.time_range?.end ? `to: ${escapeHtml(formatTime(plan.time_range.end))}` : '',
     plan.amount_range?.min != null ? `min amount: ${escapeHtml(plan.amount_range.min)}` : '',
@@ -456,15 +500,55 @@ async function loadLanguages() {
 }
 
 /* ---------------- actions ---------------- */
+function renderImagePreview() {
+  const box = $('#image-preview');
+  if (!state.attachedImages.length) {
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = state.attachedImages.map((img, i) =>
+    `<div class="image-chip">
+      <img src="${escapeHtml(img.dataUrl)}" alt="${escapeHtml(img.name)}">
+      <button class="chip-remove" data-index="${i}" title="Remove">✕</button>
+      <span>${escapeHtml(img.name)}</span>
+    </div>`).join('');
+  box.querySelectorAll('.chip-remove').forEach((btn) => btn.addEventListener('click', () => {
+    state.attachedImages.splice(Number(btn.dataset.index), 1);
+    renderImagePreview();
+  }));
+}
+
+function addAttachedImages(files) {
+  Array.from(files || []).slice(0, 3 - state.attachedImages.length).forEach((file) => {
+    if (!file.type.startsWith('image/')) {
+      toast(`${file.name}: only image files are supported.`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      state.attachedImages.push({ name: file.name, dataUrl: String(reader.result) });
+      renderImagePreview();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function ask(question) {
-  if (!question || !state.caseId) {
+  const hasImages = state.attachedImages.length > 0;
+  if ((!question && !hasImages) || !state.caseId) {
     toast('Load a case first (python run_case.py demo).');
     return;
   }
   if (state.busy) return;
+  if (!question) question = 'Describe this image.';
+  const images = state.attachedImages.map((img) => img.dataUrl);
   state.busy = true;
   $('#send-btn').disabled = true;
-  addMessage('user', `<p>${escapeHtml(question)}</p>`);
+  const userHtml = `<p>${escapeHtml(question)}</p>` + images.map((src) =>
+    `<img class="user-attachment" src="${escapeHtml(src)}" alt="uploaded image">`).join('');
+  addMessage('user', userHtml);
+  state.attachedImages = [];
+  renderImagePreview();
   const thinking = addMessage('assistant', `<span class="thinking">${escapeHtml(t('chat.thinking', 'Searching the evidence…'))}</span>`);
   try {
     const answer = await post('/api/ask', {
@@ -472,6 +556,7 @@ async function ask(question) {
       question,
       lang: state.lang,
       session_id: state.sessionId,
+      images,
     });
     thinking.remove();
     renderAnswer(answer);
@@ -571,7 +656,7 @@ async function init() {
   });
   $('#send-btn').addEventListener('click', () => {
     const q = $('#question').value.trim();
-    if (!q) return;
+    if (!q && !state.attachedImages.length) return;
     $('#question').value = '';
     ask(q);
   });
@@ -580,6 +665,11 @@ async function init() {
       e.preventDefault();
       $('#send-btn').click();
     }
+  });
+  $('#attach-btn').addEventListener('click', () => $('#image-input').click());
+  $('#image-input').addEventListener('change', (e) => {
+    addAttachedImages(e.target.files);
+    e.target.value = '';
   });
   $('#generate-report').addEventListener('click', generateReport);
   $('#regen-leads').addEventListener('click', regenLeads);

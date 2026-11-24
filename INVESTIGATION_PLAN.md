@@ -3,12 +3,18 @@
 **From:** Multi-source financial anomaly detection engine (AML)
 **To:** AI-Powered Digital Investigation Assistant
 
-**Status:** Plan + Phases 1–4 implemented and verified (2026-11-24)
-**Baseline verified:** **105 non-UI tests pass** on Python 3.15
-(`pytest tests --ignore=tests/test_main_app.py`): 84 original + 21 new investigation
-tests. The PySide6 desktop tests require PySide6, which is not installed in the current
-environment. The demo case + investigation evaluation are reproducible with
-`python run_case.py demo` and `python eval_investigation.py --case <case_id>`.
+**Status:** Phases 1–5 delivered; **Option B complete** — the case workspace now lives inside
+`src/aml`, with `CasePipeline` extending the existing pipeline. Cloudflare Workers AI text /
+vision / FLUX image generation, agentic chat tools and the improved graphs are also delivered
+(2026-11-24).
+
+**Baseline verified:** **112 non-UI tests pass, 4 skipped** on Python 3.15
+(`pytest tests --ignore=tests/test_main_app.py`): 84 original + 28 investigation/agent-tool
+tests, plus 4 live Cloudflare integration tests that are skipped unless
+`RUN_CLOUDFLARE_TESTS=1` (they all pass when enabled). The PySide6 desktop tests require
+PySide6, which is not installed in the current environment. The demo case + investigation
+evaluation are reproducible with `python run_case.py demo` and
+`python eval_investigation.py --case <case_id>`.
 
 ---
 
@@ -32,11 +38,14 @@ investigation workspace** on top of that analytics core:
 | Case summarization | Entity-level narratives exist; no case/entity dossier summarization |
 | Draft case reports | A polished anomaly brief exists; no investigation case-report structure |
 
-**Strategy:** keep the verified `src/aml` engine intact as the analytics core, and add a
-new `src/investigation` layer that turns it into a case-based investigation assistant.
-This preserves the existing evaluation harness and 84 green tests while adding the new
-deliverables. The desktop analyst app remains available; a new conversational web
-workspace and CLI expose the investigation workflow.
+**Strategy (Option B, delivered):** keep the verified `src/aml` engine intact as the
+analytics core and fold the case workspace **into the same `aml` package** — `case.py`,
+`case_store.py`, `diary.py`, `evidence.py`, `query.py`, `index.py`, `retrieval.py`,
+`summarize.py`, `recommend.py`, `assistant.py`, `llm.py`, `case_report.py`, `service.py`.
+`CasePipeline` in `src/aml/pipeline.py` extends the existing `Pipeline`; there is no
+parallel `src/investigation` package. The existing evaluation harness and 84 original tests
+remain valid, and `run_pipeline.py --investigation` exposes the case workflow through the
+existing CLI.
 
 **Pivot in one sentence:** *The AML engine becomes the "suspicious-pattern detection"
 subsystem of a larger evidence-retrieval, case-reasoning, and reporting assistant.*
@@ -165,7 +174,7 @@ unified dataframe: entity | event | timestamp | source | amount |
                                     │  diary / report
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                    INVESTIGATION SERVICE (`src/investigation`)               │
+│                    CASE WORKSPACE (`src/aml`, same package)                 │
 │                                                                              │
 │  QueryParser ──► HybridRetriever ──► AnswerSynthesizer ──► citations         │
 │       │               │                    │                                 │
@@ -174,6 +183,8 @@ unified dataframe: entity | event | timestamp | source | amount |
 │       │               └── EntityGraph      └── RecommendationEngine          │
 │       │                                                                      │
 │  CaseStore ──► EvidenceInventory ──► CaseDiary (hash chain) ──► CaseReport   │
+│  Agent tools: rerun · recheck · plot · deep dive · generate image · vision   │
+│  Cloudflare Workers AI: text · vision · FLUX image generation                │
 └───────────────────────────────────┬──────────────────────────────────────────┘
                                     │
                                     ▼
@@ -197,7 +208,7 @@ unified dataframe: entity | event | timestamp | source | amount |
 | `Finding` | id, kind, title, description, severity, confidence, entity/evidence links, citations, detected_by | Suspicious pattern / insight |
 | `Recommendation` | id, priority, action, rationale, category, entity/finding/evidence links, status | Investigative lead |
 | `DiaryEntry` | id, seq, timestamp, actor, entry_type, text, evidence_ids, prev_hash, hash | Tamper-evident case diary |
-| `Answer` | text, intent, language, citations, hits, confidence, followups, data, query_plan | Chat response |
+| `Answer` | text, intent, language, citations, hits, confidence, followups, data, query_plan, images, artifacts | Chat response with inline charts/uploads and downloadable artefacts |
 
 ### 5.2 Storage layout
 
@@ -216,6 +227,7 @@ data/cases/<case_id>/
     case_report.json
     case_diary.md
     analytics/              # existing aml report (HTML/PDF/MD/JSON/charts)
+    chat/                   # generated charts, uploaded images, FLUX illustrations
   audit.log                 # human-readable mirror of the hash-chained diary
 ```
 
@@ -223,27 +235,28 @@ data/cases/<case_id>/
 
 ## 6. Work breakdown (file-level)
 
-### 6.1 New package — `src/investigation/`
+### 6.1 Case-workspace modules — `src/aml/` (Option B)
 
 | File | Responsibility |
 |---|---|
-| `__init__.py` | Public API + version |
-| `models.py` | Dataclasses: `Case`, `EvidenceItem`, `Entity`, `Chunk`, `Finding`, `Citation`, `Recommendation`, `DiaryEntry`, `Answer`, `QueryPlan`, `TimeRange`, `AmountRange`; serialization |
+| `case.py` | Dataclasses: `Case`, `EvidenceItem`, `Entity`, `Chunk`, `Finding`, `Citation`, `Recommendation`, `DiaryEntry`, `Answer`, `QueryPlan`, `TimeRange`, `AmountRange`; serialization |
 | `i18n.py` | Locale catalogs (en/hi/es/fr/de/pt), `t()`, language detection, language-request detection, stopwords, month names, query examples |
 | `case_store.py` | Create/load/save/list cases, copy evidence, SHA-256, duplicate detection, index persistence |
 | `diary.py` | Append-only hash-chained diary, verification, markdown rendering |
 | `evidence.py` | Structured evidence parsing (reuses `aml`), EML/PDF/DOCX/MD/TXT/image extraction, chunking, mention extraction, timestamp/location/amount extraction |
-| `query.py` | Multilingual query parser: intent, entity, time, amount, source, direction, location, keywords, limit, ambiguity |
+| `query.py` | Multilingual query parser: intent, entity, time, amount, source, direction, location, keywords, chart kind, image prompt, limit, ambiguity; agent-tool intents |
 | `index.py` | `EvidenceIndex`: event index, BM25 text index, entity registry, entity graph, aggregate/timeline/relationship queries |
 | `retrieval.py` | `HybridRetriever`: hard filters + BM25 + graph expansion + recency + anomaly boost, dedupe, citations |
 | `summarize.py` | Case summary, entity dossier, timeline summary, evidence-gap summary |
 | `recommend.py` | Evidence-gap and finding-driven recommendation rules with priority/rationale |
-| `llm.py` | Optional provider-agnostic LLM adapter (OpenAI-compatible / Ollama), grounded prompt, citation validation, offline fallback |
+| `llm.py` | Cloudflare Workers AI (text + vision + FLUX image generation) plus OpenAI-compatible/Ollama adapters; grounded prompt, citation validation, offline fallback |
 | `assistant.py` | Intent routing, session context, answer synthesis, citations, confidence, follow-ups, diary logging |
 | `case_report.py` | Draft case report (MD/HTML/JSON/PDF), diary export |
-| `service.py` | `InvestigationService` orchestrator: create/ingest/analyze/ask/summarize/recommend/diary/report |
-| `config_loader.py` | CLI/web config loading (`config/investigation.yaml`) |
-| `demo_case.py` | Demo case generator helpers (emails, chats, notes, PDF, ground truth) |
+| `service.py` | `InvestigationService` orchestrator + agent tools (rerun, recheck, plot, deep dive, generate image, vision) |
+| `config.py` | `InvestigationConfig` / `load_investigation_config` merged into the existing config module |
+| `pipeline.py` | `PipelineResult` extended with case/evidence/index/findings/recommendations/summary/diary; `CasePipeline` unified entry point |
+| `visuals.py` | OSM-backed activity map + interactive Leaflet HTML map, connected correlation graph, line-graph timelines |
+| `data_generator/investigation_case.py` | Demo case generator helpers (emails, chats, notes, PDF, ground truth) |
 
 ### 6.2 New entry points
 
@@ -255,22 +268,32 @@ data/cases/<case_id>/
 | `web/static/index.html` | Chat workspace: case header, chat, citations, evidence/entities/findings/diary tabs, language switcher |
 | `web/static/app.js` | Fetch API, chat rendering, citation cards, tabs, i18n |
 | `web/static/style.css` | Dark Sutram theme |
+| `run_pipeline.py --investigation` | Existing CLI gains the case workspace: create/ingest/analyze/ask/report through `CasePipeline` |
+| `run_demo.py --investigation` | Build the complete case demo (structured + emails + chats + notes + PDF + ground truth) and run the workflow |
 | `eval_investigation.py` | Retrieval / QA / citation / recommendation / multilingual evaluation |
-| `scripts/make_demo_case.py` | Generate a complete demo case (structured + emails + chats + notes + PDF + ground truth) and run the workflow |
+| `tests/test_cloudflare_integration.py` | Live text/vision/FLUX integration tests (skipped unless `RUN_CLOUDFLARE_TESTS=1`) |
 
 ### 6.3 Existing files changed (minimal, non-breaking)
 
 | File | Change |
 |---|---|
-| `README.md` | Rebrand + new quickstart + deliverable mapping |
+| `README.md` | Rebrand + new quickstart + deliverable mapping + Cloudflare/agent-tool docs |
 | `PLAN.md` | Add a pointer at the top to this plan; keep the AML build record |
-| `requirements.txt` | No new mandatory deps; document optional extras (`Pillow` for EXIF, `python-docx` not required) |
-| `config/investigation.yaml` | New config: case root, language, retrieval weights, top_k, analysis thresholds, LLM provider |
-| `tests/` | New `test_investigation_*.py` files; existing tests untouched |
+| `requirements.txt` | No new mandatory deps; Cloudflare uses stdlib `urllib`; `Pillow` remains optional for EXIF |
+| `config/investigation.yaml` | Case root, language, analysis thresholds, Cloudflare model IDs/timeout |
+| `src/aml/config.py` | `InvestigationConfig` + `load_investigation_config` merged into the existing config module |
+| `src/aml/pipeline.py` | `PipelineResult` extended; `CasePipeline` added |
+| `src/aml/report.py` | Correlation-graph heading, interactive Leaflet map, new chart calls, map points in JSON |
+| `src/aml/visuals.py` | OSM map + zoom inset, connected correlation graph, line-graph timelines, larger labels |
+| `run_pipeline.py` | `--investigation` case mode using `CasePipeline` |
+| `run_demo.py` | `--investigation` demo mode |
+| `run_case.py`, `ask.py`, `run_web.py`, `web/` | Case CLI, image attachments, inline charts/artefacts |
+| `tests/` | `test_investigation_*.py`, agent-tool tests, live Cloudflare tests; existing tests updated only for new report headings |
+| `.env.example`, `.gitignore` | Credential template + `.env` ignored |
 | `data/cases/.gitkeep` | Case root placeholder |
 
-**No changes to `src/aml` code** in Phase 1. The analytics core remains the verified
-engine and all 84 existing tests remain valid.
+The original 84 tests remain green; the only existing-test edits are the two report-heading
+assertions changed by the new graph titles (`Suspect correlation graph`, `Activity map`).
 
 ---
 
@@ -303,27 +326,31 @@ engine and all 84 existing tests remain valid.
 
 **Acceptance:** 20 demo questions in en/hi/es answer correctly with citations; follow-up pronouns work; recommendations cover all evidence-gap categories; case summary contains period, sources, entities, findings, gaps.
 
-### Phase 3 — Interfaces (1–2 days)
+### Phase 3 — Interfaces + Cloudflare AI (delivered)
 - `run_case.py` CLI + `ask.py` REPL.
 - Zero-dependency web workspace: chat, citations, evidence explorer, entities, findings, diary, recommendations, report, language switcher.
-- Optional LLM polish adapter (offline fallback stays default).
+- Image upload for vision analysis; inline generated charts/illustrations and download links.
+- Cloudflare Workers AI: text polish, vision reading, FLUX text-to-image; offline fallback remains.
+- Agentic tools: rerun analysis, recheck numbers, plot charts, deep-dive models, generate image, vision.
 
-**Acceptance:** a judge can run one command, open a browser, ask questions in two languages, inspect citations, view the diary, and download the draft report.
+**Acceptance met:** one command opens a browser; questions work in two languages; citations and the diary are inspectable; the report downloads; images render inline.
 
-### Phase 4 — Report + evaluation + demo (1 day)
+### Phase 4 — Report + evaluation + demo + graphs (delivered)
 - Draft case report (MD/HTML/JSON/PDF) with evidence inventory, entities, findings, timeline, recommendations, diary, limitations, analytics appendix.
 - Demo case generator with emails/chats/notes/PDF and ground truth.
 - Investigation eval harness: retrieval Recall@k/MRR, intent accuracy, citation accuracy, recommendation coverage, multilingual parity.
+- Graph improvements: OSM-backed activity map with zoom inset + interactive Leaflet map, connected/labelled correlation graph, line-graph timelines, larger labels.
 - README/PLAN/config updates.
 
-**Acceptance:** `python run_case.py demo` produces a complete case and report; `python eval_investigation.py` prints reproducible metrics; existing `pytest` + `eval.py` still pass.
+**Acceptance met:** `python run_case.py demo` produces a complete case and report; `python eval_investigation.py` prints reproducible metrics; existing `pytest` + `eval.py` still pass.
 
-### Phase 5 — Stretch (optional)
+### Phase 5 — Remaining stretch (optional)
 - Embedding retrieval (`sentence-transformers` or provider embeddings) fused with BM25.
 - OCR for scanned images (Tesseract optional).
 - Arabic/Urdu RTL UI + locales.
 - Analyst feedback loop: accept/reject recommendations, diary records decisions.
 - Export to standard investigation formats (e.g., case-management JSON).
+- CI pinned to Python 3.11 + PySide6 to run the desktop UI tests.
 
 ---
 
@@ -459,23 +486,26 @@ The demo case generator writes `ground_truth.json` with:
 ## 12. Demo script (5 minutes)
 
 1. **Open** the web workspace on the demo case: case title, evidence count, entity count, date range.
-2. **Ask in English:** "Show me transfers above 10,000 from Viktor in the last 30 days." → cited transaction cards.
-3. **Follow up:** "Who did he call right before those transfers?" → correlation answer with call + transfer citations.
+2. **Ask in English:** "Show transfers above 9,000 from Yara Okafor in the last 90 days." → cited transaction cards.
+3. **Follow up:** "Who did Ava Carlos call right before the transfer?" → correlation answer with call + transfer citations.
 4. **Ask in Hindi:** "इस मामले में संदिग्ध गतिविधि क्या है?" → findings with severity + evidence.
-5. **Ask:** "What is the connection between Viktor and Elena?" → graph path + shared events.
+5. **Ask:** "What is the connection between Yara Okafor and Ava Carlos?" → graph path + shared events.
 6. **Ask:** "What should I investigate next?" → prioritized recommendations with rationale.
-7. **Open the diary:** ingest/analysis/query/finding entries, hash chain verified.
-8. **Download the draft case report:** executive summary, evidence inventory, entities, findings, timeline, recommendations, diary, limitations, analytics appendix.
-9. **Show the analytics appendix:** the existing anomaly brief with charts and sufficiency verdicts.
+7. **Agent tools:** "Rerun the analysis." → refreshed findings/leads + correlation graph + report downloads; "Recheck the numbers." → Markdown table; "Plot the map." → inline map; "Analyze further for structuring." → model deep-dive.
+8. **Cloudflare AI:** "Generate an image of a clean forensic case board…" → inline FLUX illustration; attach a chart and ask "What does this chart show?" → vision answer.
+9. **Open the diary:** ingest/analysis/query/finding entries, hash chain verified.
+10. **Download the draft case report:** executive summary, evidence inventory, entities, findings, timeline, recommendations, diary, limitations, analytics appendix.
+11. **Show the improved analytics appendix:** OSM activity map with zoom inset + interactive Leaflet map, connected correlation graph, line-graph timelines.
 
 ---
 
 ## 13. Delivered in this session
 
-Phases 1–4 are implemented and verified:
+Phases 1–5 are delivered; **Option B** is complete:
 
 - [x] This plan
-- [x] `src/investigation` core: models, i18n, case store, hash-chained diary
+- [x] **Option B:** case workspace folded into `src/aml` (`case.py`, `case_store.py`, `diary.py`, `evidence.py`, `query.py`, `index.py`, `retrieval.py`, `summarize.py`, `recommend.py`, `assistant.py`, `llm.py`, `case_report.py`, `service.py`, `i18n.py`)
+- [x] `CasePipeline` in `src/aml/pipeline.py`; extended `PipelineResult`; `run_pipeline.py --investigation`
 - [x] Evidence ingestion: structured + EML/PDF/DOCX/MD/TXT/chat, chunking, entity mentions
 - [x] Multilingual query parser + BM25 index + hybrid retrieval + citations
 - [x] Case summarizer + entity dossier + timeline + evidence-gap analysis
@@ -483,11 +513,14 @@ Phases 1–4 are implemented and verified:
 - [x] Assistant + citations + session memory + follow-ups
 - [x] Case report generator (MD/HTML/JSON/PDF) + diary export
 - [x] CLI (`run_case.py`, `ask.py`) + `run_web.py`
-- [x] Demo case generator + ground truth
+- [x] Demo case generator + ground truth (`run_demo.py --investigation`)
 - [x] Investigation eval harness
 - [x] Zero-dependency web chat workspace (chat, evidence, entities, findings, leads, diary, report, language switcher)
+- [x] **Cloudflare Workers AI:** text polish, vision reading, FLUX text-to-image; `.env` credentials; live integration tests
+- [x] **Agentic tools:** rerun analysis, recheck numbers, plot charts, deep-dive models, generate image, image upload/vision; inline images and artefacts in chat
+- [x] **Improved graphs:** OSM activity map + zoom inset + interactive Leaflet map, connected/labelled correlation graph, line-graph timelines, larger labels
 - [x] README / PLAN / config updates
-- [x] 21 new tests + full non-UI regression run (105 passed)
+- [x] **112 non-UI tests pass, 4 skipped** (84 original + 28 investigation/agent-tool tests; 4 live Cloudflare tests skipped by default, all passing when enabled)
 
 ### Verified demo results (16 queries, synthetic demo case)
 

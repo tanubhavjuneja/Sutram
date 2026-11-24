@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from investigation.case_store import CaseStore
-from investigation.diary import append_entry, verify_chain
-from investigation.i18n import detect_language, normalize_language, t
-from investigation.index import BM25, tokenize
-from investigation.models import Case
-from investigation.query import QueryParser
+from aml.case_store import CaseStore
+from aml.diary import append_entry, verify_chain
+from aml.i18n import detect_language, normalize_language, t
+from aml.index import BM25, tokenize
+from aml.case import Case
+from aml.query import QueryParser
 
 
 def _parser() -> QueryParser:
@@ -127,6 +127,25 @@ def test_query_parser_given_name_resolution():
     assert "E2" in plan.entity_ids
 
 
+def test_query_parser_agent_tool_intents():
+    p = _parser()
+    rerun = p.parse("Rerun the analysis.")
+    assert rerun.intent == "run_analysis"
+    recheck = p.parse("Recheck the numbers.")
+    assert recheck.intent == "recheck"
+    plot = p.parse("Plot the correlation network.")
+    assert plot.intent == "plot" and plot.chart_kind == "network"
+    timeline = p.parse("Plot the timeline.")
+    assert timeline.intent == "plot" and timeline.chart_kind == "timeline"
+    map_plan = p.parse("Show me the map.")
+    assert map_plan.intent == "plot" and map_plan.chart_kind == "map"
+    deep = p.parse("Analyze further for structuring.")
+    assert deep.intent == "deep_dive"
+    generated = p.parse("Generate an image of a suspect board.")
+    assert generated.intent == "generate_image"
+    assert "suspect board" in generated.image_prompt.lower()
+
+
 # ---------------------------------------------------------------------------
 # BM25
 # ---------------------------------------------------------------------------
@@ -180,7 +199,7 @@ def test_case_store_evidence_hash_and_duplicate_detection(tmp_path):
 def test_case_roundtrip_json(tmp_path):
     store = CaseStore(tmp_path)
     case = store.create_case("Roundtrip", description="desc", language="hi")
-    case.entities["E1"] = __import__("investigation.models", fromlist=["Entity"]).Entity(
+    case.entities["E1"] = __import__("aml.case", fromlist=["Entity"]).Entity(
         entity_id="E1", names=["Test Person"], identifiers=["ACCT1"], risk_score=0.8,
     )
     store.save_case(case)

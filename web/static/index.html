@@ -56,6 +56,12 @@
         <div class="chat" id="chat"></div>
         <div class="composer">
           <div class="suggestions" id="suggestions"></div>
+          <div class="attach-row">
+            <button id="attach-btn" class="btn ghost" type="button">Attach image</button>
+            <input id="image-input" type="file" accept="image/*" multiple hidden>
+            <span class="muted">Upload an image for vision analysis (PNG / JPG).</span>
+          </div>
+          <div id="image-preview" class="image-preview"></div>
           <div class="input-row">
             <textarea id="question" rows="2" data-i18n-placeholder="chat.placeholder" placeholder="Ask about the evidence, an entity, a timeline, or what to do next…"></textarea>
             <button id="send-btn" class="btn primary" data-i18n="common.send">Send</button>

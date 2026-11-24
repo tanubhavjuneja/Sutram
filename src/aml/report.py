@@ -165,7 +165,7 @@ def _markdown(res, cfg, charts: Dict[str, Path]) -> str:
         L.append(_md_chart(charts["sources"]))
         L.append("")
 
-    L.append("## When it happened")
+    L.append("## When it happened — daily traffic pattern")
     L.append("")
     if _has_timeline(res):
         L.append(_md_chart(charts["timeline"]))
@@ -174,13 +174,13 @@ def _markdown(res, cfg, charts: Dict[str, Path]) -> str:
     L.append("")
 
     if charts.get("network") and charts.get("people") is not None:
-        L.append("## Who the flagged people are connected to")
+        L.append("## Suspect correlation graph")
         L.append("")
         L.append(_md_chart(charts["network"]))
         L.append("")
 
     if charts.get("map"):
-        L.append("## The activity map")
+        L.append("## Activity map — locations & tower telemetry")
         L.append("")
         L.append(_md_chart(charts["map"]))
         L.append("")
@@ -354,6 +354,49 @@ def _sidebar_suspects(insight_list) -> str:
     return f'<div class="side-group"><div class="side-label">SUSPECTS</div>{items}</div>'
 
 
+def _interactive_map_html(points: list) -> str:
+    """Leaflet map with real zoom/pan; the static PNG remains the offline fallback."""
+    if not points:
+        return ""
+    payload = json.dumps(points, ensure_ascii=False).replace("</", "<\\/")
+    return """
+    <div class="map-wrap">
+      <div class="map-toolbar">
+        <span class="map-title">INTERACTIVE MAP</span>
+        <span class="map-hint">scroll / pinch to zoom · drag to pan · click a point for detail</span>
+      </div>
+      <div id="interactive-map"></div>
+      <div class="map-foot">Background © OpenStreetMap contributors. The static map above remains available offline.</div>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+    (function() {
+      if (typeof L === "undefined") return;
+      var pts = __POINTS__;
+      if (!pts.length) return;
+      var map = L.map("interactive-map", {scrollWheelZoom: true}).setView(
+        [pts[0].lat, pts[0].lon], 12);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: "&copy; OpenStreetMap contributors"
+      }).addTo(map);
+      var bounds = [];
+      pts.forEach(function(p) {
+        var color = p.flagged ? "#F87171" : "#FFB000";
+        var radius = 6 + Math.min(15, Math.sqrt(p.count) * 2.2);
+        var marker = L.circleMarker([p.lat, p.lon], {
+          radius: radius, color: color, fillColor: color, fillOpacity: 0.72,
+          weight: 1.5
+        }).addTo(map);
+        marker.bindPopup("<b>" + p.label + "</b><br>" + p.count.toLocaleString() +
+          " events" + (p.synthetic ? "<br><i>synthetic geo-projection</i>" : ""));
+        bounds.push([p.lat, p.lon]);
+      });
+      if (bounds.length > 1) map.fitBounds(bounds, {padding: [24, 24]});
+    })();
+    </script>
+    """.replace("__POINTS__", payload)
+
+
 def _html(res, cfg, charts: Dict[str, Path]) -> str:
     insight_list = _insights_for(res, cfg)
     overview = _overview_lines(res, insight_list)
@@ -370,6 +413,8 @@ def _html(res, cfg, charts: Dict[str, Path]) -> str:
     mp_d, mp_l = _b64(c_dark.get("map")), _b64(c_light.get("map"))
     so_d, so_l = _b64(c_dark.get("sources")), _b64(c_light.get("sources"))
     pe_d, pe_l = _b64(c_dark.get("people")), _b64(c_light.get("people"))
+    map_points = visuals.location_points(res)
+    interactive_map = _interactive_map_html(map_points)
 
     register = _html_register(res, insight_list, drill_dark, drill_light)
     suff = _html_sufficiency_table(res)
@@ -384,6 +429,7 @@ def _html(res, cfg, charts: Dict[str, Path]) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{REPORT_TITLE} — Sutram Console</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root, [data-theme="dark"] {{
     --bg: #020617; --panel: #0F172A; --raised: #1E293B;
@@ -625,6 +671,29 @@ def _html(res, cfg, charts: Dict[str, Path]) -> str:
     padding: 18px; text-align: center; letter-spacing: 1px; font-size: 11px;
   }}
 
+  /* ---- interactive activity map ---- */
+  .map-wrap {{
+    margin-top: 12px; border: 1px solid var(--line); background: var(--panel);
+  }}
+  .map-toolbar {{
+    display: flex; justify-content: space-between; gap: 12px; align-items: center;
+    padding: 8px 12px; border-bottom: 1px solid var(--line);
+  }}
+  .map-title {{
+    font-size: 9.5px; letter-spacing: 1.2px; color: var(--amber);
+    font-weight: 700; text-transform: uppercase;
+  }}
+  .map-hint {{ font-size: 9.5px; color: var(--tx3); }}
+  #interactive-map {{ height: 460px; width: 100%; background: var(--raised); }}
+  .map-foot {{
+    padding: 6px 12px; border-top: 1px solid var(--line);
+    font-size: 9px; color: var(--tx3);
+  }}
+  .leaflet-container {{ background: var(--raised); font-family: inherit; }}
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip {{
+    background: var(--panel); color: var(--tx); border: 1px solid var(--line);
+  }}
+
   /* ---- charts: theme swap ---- */
   [data-theme="dark"] .chart-light {{ display: none !important; }}
   [data-theme="dark"] .chart-dark {{ display: block !important; }}
@@ -720,20 +789,21 @@ def _html(res, cfg, charts: Dict[str, Path]) -> str:
 
     <section class="block" id="sec-03">
       <div class="block-head"><span class="block-no">03</span><h2>When it happened</h2>
-        <span class="sub">EVENT VOLUME BY MODALITY</span></div>
+        <span class="sub">DAILY TRAFFIC BY MODALITY — LINE GRAPH</span></div>
       {_visual_box("", "", tl_d, tl_l) if (tl_d or tl_l) else '<div class="empty">NO TIMESTAMPED RECORDS</div>'}
     </section>
 
     <section class="block" id="sec-04">
-      <div class="block-head"><span class="block-no">04</span><h2>Who the flagged people are connected to</h2>
-        <span class="sub">EGO-NETWORK · TOP COUNTERPARTIES</span></div>
+      <div class="block-head"><span class="block-no">04</span><h2>Suspect correlation graph</h2>
+        <span class="sub">CONNECTIONS FOUND BY THE ENSEMBLE — DIRECT · COLOCATION · SHARED LOCATION/COUNTERPARTY</span></div>
       {_visual_box("", "", nw_d, nw_l) if (nw_d or nw_l) else '<div class="empty">NO COUNTERPARTY DIMENSION</div>'}
     </section>
 
     <section class="block" id="sec-05">
-      <div class="block-head"><span class="block-no">05</span><h2>The activity map</h2>
-        <span class="sub">LOCATIONS &amp; TOWER TELEMETRY</span></div>
+      <div class="block-head"><span class="block-no">05</span><h2>Activity map</h2>
+        <span class="sub">OPENSTREETMAP BACKGROUND · INTERACTIVE ZOOM IN HTML</span></div>
       {_visual_box("", "", mp_d, mp_l) if (mp_d or mp_l) else '<div class="empty">NO LOCATION DATA</div>'}
+      {interactive_map}
     </section>
 
     <section class="block" id="sec-06">
@@ -752,7 +822,7 @@ def _html(res, cfg, charts: Dict[str, Path]) -> str:
 
     <div class="foot">
       <span><b>SUTRAM</b> · multi-source anomaly console — full detail in <code>report.json</code></span>
-      <span>SELF-CONTAINED · NO EXTERNAL REQUESTS</span>
+      <span>STATIC CHARTS SELF-CONTAINED · INTERACTIVE MAP USES OSM TILES</span>
     </div>
   </main>
 </div>
@@ -935,6 +1005,7 @@ def _json(res, cfg) -> dict:
         "model_scores": {m: dict(sorted(s.items(), key=lambda kv: -kv[1])[:20])
                          for m, s in scores.items()},
         "rankings": res.rankings,
+        "map_points": visuals.location_points(res),
     }
 
 
@@ -1014,17 +1085,17 @@ def _pdf(res, cfg, report_dir: Path, charts: Dict[str, Path]) -> Path:
     story.append(Spacer(1, 3 * mm))
 
     if charts.get("timeline") and _has_timeline(res):
-        story.append(Paragraph("When it happened", h2))
+        story.append(Paragraph("Daily traffic pattern", h2))
         story.append(Image(str(charts["timeline"]), width=170 * mm, height=54 * mm))
         story.append(Spacer(1, 3 * mm))
 
     if charts.get("network"):
-        story.append(Paragraph("Who the flagged people are connected to", h2))
+        story.append(Paragraph("Suspect correlation graph", h2))
         story.append(Image(str(charts["network"]), width=170 * mm, height=90 * mm))
         story.append(Spacer(1, 3 * mm))
 
     if charts.get("map"):
-        story.append(Paragraph("The activity map", h2))
+        story.append(Paragraph("Activity map", h2))
         story.append(Image(str(charts["map"]), width=170 * mm, height=92 * mm))
         story.append(Spacer(1, 3 * mm))
 
@@ -1056,7 +1127,9 @@ def generate_report(result, config, report_dir: str | Path = "data/report") -> d
         "people": visuals.render_person_attention(result, charts_dir, name="people_dark.png", theme="dark"),
         "sources": visuals.render_sources(result, charts_dir, name="sources_dark.png", theme="dark"),
         "timeline": visuals.render_timeline(result, charts_dir, name="timeline_dark.png", theme="dark"),
-        "network": visuals.render_ego_graph(result, charts_dir, name="network_dark.png", theme="dark"),
+        "network": visuals.render_correlation_graph(
+            result, charts_dir, name="network_dark.png", theme="dark",
+            tol_minutes=getattr(config, "tol_minutes", 25)),
         "map": visuals.render_location_map(result, charts_dir, name="map_dark.png", theme="dark"),
     }
     # 2. Light theme charts (standards & toggle support)
@@ -1064,7 +1137,9 @@ def generate_report(result, config, report_dir: str | Path = "data/report") -> d
         "people": visuals.render_person_attention(result, charts_dir, name="people.png", theme="light"),
         "sources": visuals.render_sources(result, charts_dir, name="sources.png", theme="light"),
         "timeline": visuals.render_timeline(result, charts_dir, name="timeline.png", theme="light"),
-        "network": visuals.render_ego_graph(result, charts_dir, name="network.png", theme="light"),
+        "network": visuals.render_correlation_graph(
+            result, charts_dir, name="network.png", theme="light",
+            tol_minutes=getattr(config, "tol_minutes", 25)),
         "map": visuals.render_location_map(result, charts_dir, name="map.png", theme="light"),
     }
     top = _insights_for(result, config) or []

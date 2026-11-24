@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from .index import EvidenceIndex, _safe_ts
-from .models import Citation, QueryPlan
+from .case import Citation, QueryPlan
 
 
 @dataclass

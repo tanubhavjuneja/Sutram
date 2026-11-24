@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 
 from aml.pipeline import Pipeline
@@ -61,8 +63,11 @@ def test_report_generation(synthetic_dir, tmp_path):
     assert "The people who stand out" in md
     assert "Where the records came from" in md
     assert "When it happened" in md
-    # the human report must not expose jargon/scores
-    assert "model" not in md.lower()
+    # the human report must not expose jargon/scores.  Base64 image payloads
+    # can contain arbitrary substrings (including "model"), so check the prose
+    # with the embedded data URIs stripped out.
+    prose = re.sub(r"data:image/png;base64,[A-Za-z0-9+/=]+", "", md)
+    assert "model" not in prose.lower()
     # charts must be embedded in the markdown itself (self-contained export)
     assert "data:image/png;base64," in md
     assert md.count("data:image/png;base64,") >= 2
@@ -77,8 +82,8 @@ def test_report_generation(synthetic_dir, tmp_path):
     assert {"network.png", "map.png", "people.png", "sources.png",
             "timeline.png"} <= names
     assert any(n.startswith("entity_") for n in names)
-    assert "Who the flagged people are connected to" in md
-    assert "The activity map" in md
+    assert "Suspect correlation graph" in md
+    assert "Activity map" in md
     from pypdf import PdfReader
     pdf = PdfReader(str(tmp_path / "report.pdf"))
     assert len(pdf.pages) >= 1

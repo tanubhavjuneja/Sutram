@@ -37,7 +37,7 @@ import pandas as pd
 
 from .case_store import CaseStore
 from .i18n import normalize_text
-from .models import Case, Chunk, Entity, EvidenceItem, utc_now
+from .case import Case, Chunk, Entity, EvidenceItem, utc_now
 
 # ---------------------------------------------------------------------------
 # file classification

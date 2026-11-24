@@ -40,13 +40,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 os.environ.setdefault("AML_SKIP_TORCH", "1")
 
-from investigation import InvestigationService  # noqa: E402
-from investigation.config_loader import load_config  # noqa: E402
-from investigation.diary import verify_chain  # noqa: E402
-from investigation.i18n import (CATALOGS, SUPPORTED_LANGUAGES, language_name,  # noqa: E402
+from aml.service import InvestigationService  # noqa: E402
+from aml.config import load_config  # noqa: E402
+from aml.diary import verify_chain  # noqa: E402
+from aml.i18n import (CATALOGS, SUPPORTED_LANGUAGES, language_name,  # noqa: E402
                                 normalize_language)
-from investigation.recommend import generate_recommendations  # noqa: E402
-from investigation.summarize import case_summary  # noqa: E402
+from aml.recommend import generate_recommendations  # noqa: E402
+from aml.summarize import case_summary  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _LOCK = threading.Lock()
@@ -258,8 +258,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not case_id or not question:
                     return self._error("case_id and question are required", status=400)
                 with _LOCK:
-                    answer = STATE.service.ask(case_id, question, lang=lang,
-                                               session_id=session_id)
+                    answer = STATE.service.ask(
+                        case_id, question, lang=lang, session_id=session_id,
+                        images=payload.get("images") or None,
+                    )
                 return self._json(answer.to_dict())
             if path == "/api/recommend":
                 with _LOCK:

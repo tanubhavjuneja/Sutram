@@ -26,8 +26,9 @@ os.environ.setdefault("AML_SKIP_TORCH", "1")
 
 import pandas as pd
 
-from .i18n import normalize_language
-from .service import InvestigationConfig, InvestigationService
+from ..config import InvestigationConfig
+from ..i18n import normalize_language
+from ..service import InvestigationService
 
 
 def _email_for(name: str) -> str:

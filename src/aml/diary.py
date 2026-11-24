@@ -18,7 +18,7 @@ import json
 from typing import List, Tuple
 
 from .i18n import t
-from .models import Case, DiaryEntry, utc_now
+from .case import Case, DiaryEntry, utc_now
 
 GENESIS_HASH = "0" * 64
 

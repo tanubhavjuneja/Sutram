@@ -3,6 +3,8 @@ write the report, and print a summary. Configuration comes from config.yaml.
 """
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -16,6 +18,22 @@ from aml.report import generate_report  # noqa: E402
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--investigation", action="store_true",
+                    help="build the full case workspace demo (emails, chats, PDF, report)")
+    ap.add_argument("--lang", default="en")
+    args = ap.parse_args()
+
+    if args.investigation:
+        from aml.data_generator.investigation_case import build_demo_case
+        result = build_demo_case(
+            root=ROOT / "data" / "demo_case",
+            case_root=ROOT / "data" / "cases",
+            lang=args.lang,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        return 0
+
     cfg = PipelineConfig.from_yaml(str(ROOT / "config" / "config.yaml"))
 
     print("== 1/3  Generating synthetic data (CSV + JSON + TXT) ==")
