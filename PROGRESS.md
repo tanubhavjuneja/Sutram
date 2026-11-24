@@ -3,6 +3,8 @@
 **Updated:** 2026-11-24
 **Branch:** `feat/console-ui-rebuild`
 **Baseline commit:** `30085f1` (case workspace folded into `src/aml`)
+**Current commits:** `cde632e` (native case workspace + chat UI) and `066a0f2`
+  (chart layout, Cloudflare models, chart QA docs), pushed to `origin`.
 
 ## Current state
 
@@ -59,8 +61,7 @@ python scripts/chart_qa.py --case operation-nightfall-20261123T195835
 
 ## Open items
 
-- Commit the current working tree (UI integration, chart fixes, Cloudflare
-  model updates, chart QA script, progress docs) and push
-  `feat/console-ui-rebuild`.
 - Optional: add a small OpenCode plugin that caps inline images per request
   for `cloudflare-workers-ai` (hard guard against the body-size failure).
+- Optional: update the `case_workspace.png` screenshot after future UI
+  changes; the current image was rendered from the live Qt workspace.
