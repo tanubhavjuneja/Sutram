@@ -129,6 +129,68 @@ def test_entity_timeline_renders_any_eid(synthetic_dir, tmp_path):
     assert img.exists() and img.stat().st_size > 0
 
 
+def test_map_label_places_beside_single_marker():
+    """Regression: annotation extents include the leader line, so measuring the
+    annotation (rather than its text) made every label collide with its own
+    marker and silently placed nothing."""
+    import matplotlib.pyplot as plt
+    from matplotlib.text import Text
+    from aml.visuals import THEMES, _place_map_labels
+
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 10)
+    point = {"label": "T1", "lon": 5.0, "lat": 5.0, "count": 20,
+             "flagged": True}
+
+    placed = _place_map_labels(ax, fig, [point], [point], THEMES["dark"],
+                               max_count=20)
+    assert placed == 1
+    (label,) = ax.texts
+    fig.canvas.draw()
+    box = Text.get_window_extent(label, renderer=fig.canvas.get_renderer())
+    px, py = ax.transData.transform((point["lon"], point["lat"]))
+    assert not (box.x0 <= px <= box.x1 and box.y0 <= py <= box.y1), \
+        "label must not cover its own marker"
+    plt.close(fig)
+
+
+def test_map_labels_dense_do_not_overlap():
+    import matplotlib.pyplot as plt
+    from matplotlib.text import Text
+    from aml.visuals import THEMES, _place_map_labels
+
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=100)
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
+    points = [
+        {"label": f"P{i}", "lon": 5 + (i % 12) * 8, "lat": 5 + (i // 12) * 8,
+         "count": 3, "flagged": False}
+        for i in range(120)
+    ]
+    flagged = []
+    for i, (lon, lat) in enumerate([(50, 50), (20, 70), (75, 25),
+                                    (35, 20), (80, 70)]):
+        point = {"label": f"F{i}", "lon": lon, "lat": lat,
+                 "count": 90 - i * 10, "flagged": True}
+        points.append(point)
+        flagged.append(point)
+
+    placed = _place_map_labels(ax, fig, points, flagged, THEMES["dark"],
+                               max_count=90)
+    assert placed >= 4
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    labels = [t for t in ax.texts if t.get_text().startswith("F")]
+    assert len(labels) == placed
+    boxes = [Text.get_window_extent(t, renderer=renderer) for t in labels]
+    for i, box in enumerate(boxes):
+        assert ax.bbox.contains(*box.p0) and ax.bbox.contains(*box.p1)
+        for other in boxes[i + 1:]:
+            assert not box.overlaps(other)
+    plt.close(fig)
+
+
 @pytest.fixture
 def dense_df():
     return _dense_df()

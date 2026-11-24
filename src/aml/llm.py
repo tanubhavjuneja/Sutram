@@ -32,9 +32,12 @@ from typing import Dict, List, Optional, Tuple
 
 from .case import Citation
 
-_CF_VISION_DEFAULT = "@cf/meta/llama-3.2-11b-vision-instruct"
-_CF_TEXT_DEFAULT = "@cf/meta/llama-3.1-8b-instruct"
-_CF_IMAGE_DEFAULT = "@cf/black-forest-labs/flux-1-schnell"
+_CF_VISION_DEFAULT = "@cf/meta/llama-4-scout-17b-16e-instruct"
+_CF_VISION_FALLBACK = "@cf/meta/llama-3.2-11b-vision-instruct"
+_CF_TEXT_DEFAULT = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+_CF_TEXT_FALLBACK = "@cf/meta/llama-3.1-8b-instruct"
+_CF_IMAGE_DEFAULT = "@cf/black-forest-labs/flux-2-dev"
+_CF_IMAGE_FALLBACK = "@cf/black-forest-labs/flux-1-schnell"
 _CF_API = "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run"
 
 
@@ -185,10 +188,12 @@ class LLMClient:
         messages.append({"role": "user", "content": prompt})
         try:
             if self.config.provider == "cloudflare":
-                return self._cloudflare_chat(
-                    messages, max_tokens,
-                    model=self.config.text_model or self.config.model,
-                )
+                model = self.config.text_model or self.config.model
+                out = self._cloudflare_chat(messages, max_tokens, model=model)
+                if out is None and model != _CF_TEXT_FALLBACK:
+                    out = self._cloudflare_chat(
+                        messages, max_tokens, model=_CF_TEXT_FALLBACK)
+                return out
             if self.config.provider == "openai":
                 return self._openai(messages, max_tokens)
             if self.config.provider == "ollama":
@@ -208,6 +213,32 @@ class LLMClient:
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.config.api_key}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout or self.config.timeout) as resp:
+            return (resp.headers.get("Content-Type", ""), resp.read())
+
+    def _cloudflare_multipart(self, model: str, fields: Dict[str, str],
+                              timeout: Optional[int] = None) -> Tuple[str, bytes]:
+        """POST multipart/form-data; required by FLUX.2 on Workers AI."""
+        boundary = "----Sutram" + os.urandom(12).hex()
+        chunks: List[bytes] = []
+        for name, value in fields.items():
+            chunks.append(f"--{boundary}\r\n".encode("ascii"))
+            chunks.append(
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("ascii"))
+            chunks.append(str(value).encode("utf-8"))
+            chunks.append(b"\r\n")
+        chunks.append(f"--{boundary}--\r\n".encode("ascii"))
+        body = b"".join(chunks)
+        url = self.config.base_url.rstrip("/") + "/" + model
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
                 "Authorization": f"Bearer {self.config.api_key}",
             },
             method="POST",
@@ -235,10 +266,11 @@ class LLMClient:
             return result.strip()
         return None
 
-    def _cloudflare_agree(self) -> None:
+    def _cloudflare_agree(self, model: str = "") -> None:
         """Accept the Meta vision-model licence if Cloudflare asks for it."""
         try:
-            self._cloudflare_post(self.config.model, {"prompt": "agree"}, timeout=30)
+            self._cloudflare_post(model or self.config.model, {"prompt": "agree"},
+                                  timeout=30)
         except Exception:
             pass
 
@@ -257,6 +289,58 @@ class LLMClient:
             mime = "image/png"
         return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
 
+    @staticmethod
+    def _cloudflare_text_from_body(body: bytes) -> Optional[str]:
+        try:
+            data = json.loads(body.decode("utf-8", errors="replace"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        result = data.get("result")
+        if isinstance(result, dict):
+            for key in ("response", "answer", "text"):
+                value = result.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            choices = result.get("choices")
+            if choices:
+                content = choices[0].get("message", {}).get("content", "")
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+        if isinstance(result, str) and result.strip():
+            return result.strip()
+        return None
+
+    @staticmethod
+    def _vision_payload(model: str, prompt: str, system: str, data_uri: str,
+                        max_tokens: int) -> dict:
+        """Build the request shape the selected vision model expects."""
+        if "llama-4" in model:
+            return {
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                    ]},
+                ],
+                "max_tokens": max_tokens,
+                "temperature": 0.1,
+            }
+        if "moondream" in model:
+            return {
+                "task": "query",
+                "image": data_uri,
+                "question": prompt,
+                "reasoning": False,
+                "max_tokens": max_tokens,
+            }
+        return {
+            "prompt": prompt,
+            "image": data_uri,
+            "max_tokens": max_tokens,
+            "temperature": 0.1,
+        }
+
     def describe_image(self, image, question: str, lang: str = "en",
                        max_tokens: int = 500) -> Optional[str]:
         """Ask the Cloudflare vision model about an uploaded image."""
@@ -270,66 +354,90 @@ class LLMClient:
             "unclear or the answer is not visible, say so. "
             f"Answer in language code '{lang}'.\n\nQuestion: {question}"
         )
-        payload = {
-            "prompt": prompt,
-            "image": data_uri,
-            "max_tokens": max_tokens,
-            "temperature": 0.1,
-        }
-        try:
-            _, body = self._cloudflare_post(self.config.model, payload)
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="replace")
-            if exc.code == 403 and ("agree" in error_body.lower()
-                                    or "license" in error_body.lower()):
-                self._cloudflare_agree()
-                try:
-                    _, body = self._cloudflare_post(self.config.model, payload)
-                except Exception:
-                    return None
-            else:
-                return None
-        except Exception:
-            return None
-        try:
-            data = json.loads(body.decode("utf-8", errors="replace"))
-        except json.JSONDecodeError:
-            return None
-        result = data.get("result")
-        if isinstance(result, dict):
-            if "response" in result:
-                return str(result["response"]).strip()
-            choices = result.get("choices")
-            if choices:
-                return str(choices[0].get("message", {}).get("content", "")).strip()
-        if isinstance(result, str):
-            return result.strip()
+        system = (
+            "You are a forensic investigation assistant. Ground every statement in "
+            "the image; never invent facts. The image may be a chart, a screenshot or "
+            "a scanned document."
+        )
+        models = [self.config.model or _CF_VISION_DEFAULT]
+        if models[0] != _CF_VISION_FALLBACK:
+            models.append(_CF_VISION_FALLBACK)
+        for model in models:
+            payload = self._vision_payload(model, prompt, system, data_uri, max_tokens)
+            try:
+                _, body = self._cloudflare_post(model, payload)
+            except urllib.error.HTTPError as exc:
+                error_body = exc.read().decode("utf-8", errors="replace")
+                if exc.code == 403 and ("agree" in error_body.lower()
+                                        or "license" in error_body.lower()):
+                    self._cloudflare_agree(model)
+                    try:
+                        _, body = self._cloudflare_post(model, payload)
+                    except Exception:
+                        continue
+                else:
+                    continue
+            except Exception:
+                continue
+            text = self._cloudflare_text_from_body(body)
+            if text:
+                return text
         return None
 
-    def generate_image(self, prompt: str, steps: int = 4) -> Optional[bytes]:
-        """Generate an image with FLUX.1 [schnell] and return raw bytes."""
-        if not self.available or self.config.provider != "cloudflare":
-            return None
-        if not self.config.image_model:
-            return None
-        payload = {"prompt": prompt[:2048], "steps": max(1, min(8, int(steps)))}
-        try:
-            content_type, body = self._cloudflare_post(
-                self.config.image_model, payload, timeout=max(120, self.config.timeout)
-            )
-        except Exception:
-            return None
+    @staticmethod
+    def _cloudflare_image_from_body(content_type: str, body: bytes) -> Optional[bytes]:
+        if body[:2] == b"\xff\xd8" or body[:4] == b"\x89PNG":
+            return body
         if "application/json" in content_type.lower() or body[:1] == b"{":
             try:
                 data = json.loads(body.decode("utf-8", errors="replace"))
-                image_b64 = (data.get("result") or {}).get("image")
-                if image_b64:
-                    return base64.b64decode(image_b64)
-            except Exception:
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 return None
-        if body[:2] == b"\xff\xd8" or body[:4] == b"\x89PNG":
-            return body
+            result = data.get("result")
+            image_b64 = result.get("image") if isinstance(result, dict) else None
+            if image_b64:
+                try:
+                    return base64.b64decode(image_b64)
+                except Exception:
+                    return None
         return None
+
+    def generate_image(self, prompt: str, steps: int = 4, width: int = 1024,
+                       height: int = 1024) -> Optional[bytes]:
+        """Generate an image with FLUX.2 [dev] (multipart) or FLUX.1 [schnell]."""
+        if not self.available or self.config.provider != "cloudflare":
+            return None
+        prompt = (prompt or "").strip()[:2048]
+        if not prompt:
+            return None
+        model = self.config.image_model or _CF_IMAGE_FALLBACK
+        timeout = max(180, self.config.timeout)
+        steps = max(1, min(28, int(steps)))
+        if "flux-2" in model:
+            # FLUX.2 only accepts multipart/form-data, even for a text prompt.
+            fields = {
+                "prompt": prompt,
+                "steps": str(steps),
+                "width": str(max(256, min(1920, int(width)))),
+                "height": str(max(256, min(1920, int(height)))),
+            }
+            try:
+                content_type, body = self._cloudflare_multipart(
+                    model, fields, timeout=timeout)
+                image = self._cloudflare_image_from_body(content_type, body)
+                if image:
+                    return image
+            except Exception:
+                pass
+            # Fall back to the fast, JSON-based FLUX.1 model.
+            model = _CF_IMAGE_FALLBACK
+            steps = min(8, steps)
+        payload = {"prompt": prompt, "steps": steps}
+        try:
+            content_type, body = self._cloudflare_post(model, payload, timeout=timeout)
+        except Exception:
+            return None
+        return self._cloudflare_image_from_body(content_type, body)
 
     # -- OpenAI / Ollama ---------------------------------------------------
     def _openai(self, messages: List[dict], max_tokens: Optional[int]) -> Optional[str]:

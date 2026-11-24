@@ -5,14 +5,15 @@
 
 **Status:** Phases 1–5 delivered; **Option B complete** — the case workspace now lives inside
 `src/aml`, with `CasePipeline` extending the existing pipeline. Cloudflare Workers AI text /
-vision / FLUX image generation, agentic chat tools and the improved graphs are also delivered
-(2026-11-24).
+vision / FLUX image generation, agentic chat tools, the improved graphs, the native PySide6
+case workspace (`case_ui.py`), tool shortcut chips, and richer Markdown rendering are also
+delivered (2026-11-24).
 
-**Baseline verified:** **112 non-UI tests pass, 4 skipped** on Python 3.15
-(`pytest tests --ignore=tests/test_main_app.py`): 84 original + 28 investigation/agent-tool
-tests, plus 4 live Cloudflare integration tests that are skipped unless
-`RUN_CLOUDFLARE_TESTS=1` (they all pass when enabled). The PySide6 desktop tests require
-PySide6, which is not installed in the current environment. The demo case + investigation
+**Baseline verified:** **124 tests pass, 6 skipped** on Python 3.15 (`pytest tests`), including
+the PySide6 desktop UI tests and the investigation/agent-tool suite. The skipped tests include
+the 4 live Cloudflare integration tests, which pass when `RUN_CLOUDFLARE_TESTS=1`. The chart QA
+run (`python scripts/chart_qa.py --case operation-nightfall-20261123T195835`) generated every
+light/dark chart and completed Cloudflare vision read-back. The demo case + investigation
 evaluation are reproducible with `python run_case.py demo` and
 `python eval_investigation.py --case <case_id>`.
 

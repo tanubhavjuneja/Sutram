@@ -81,8 +81,9 @@ python eval_investigation.py --case <case_id>
 python run_demo.py
 python run_demo.py --investigation
 python eval.py
-pytest tests --ignore=tests/test_main_app.py
-# install PySide6 to run the desktop UI tests as well
+pytest tests
+# PySide6 is installed for the desktop UI tests; the live Cloudflare suite
+# runs with RUN_CLOUDFLARE_TESTS=1.
 ```
 
 The demo generates `data/demo_case/` (structured + emails + chats + note + PDF + ground
@@ -106,7 +107,7 @@ actions and return Markdown plus generated images/artefacts inline:
 | “Plot the timeline.” / “Show me the map.” / “Plot the correlation network.” | Renders the requested chart and displays it inline in the chat |
 | “Plot Yara Okafor’s activity.” | Renders the per-entity activity timeline |
 | “Analyze further for structuring.” / “Deep dive into the network.” | Runs the selected model on the current evidence and returns a ranked table with entity dossiers/citations |
-| “Generate an image of a clean forensic case board…” | Calls FLUX.1 [schnell] and displays the generated illustration in the chat |
+| “Generate an image of a clean forensic case board…” | Calls FLUX.2 [dev] and displays the generated illustration in the chat |
 | Attach an image + ask “What does this chart show?” | Sends the image to the Cloudflare vision model and returns a clearly labelled model observation |
 
 Tool answers are recorded in the case diary. Generated images and reports are served from
@@ -128,9 +129,9 @@ Models used:
 
 | Role | Model |
 |---|---|
-| Text / grounded polish | `@cf/meta/llama-3.1-8b-instruct` |
-| Vision / image reading | `@cf/meta/llama-3.2-11b-vision-instruct` |
-| Text-to-image | `@cf/black-forest-labs/flux-1-schnell` |
+| Text / grounded polish | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
+| Vision / image reading | `@cf/meta/llama-4-scout-17b-16e-instruct` |
+| Text-to-image | `@cf/black-forest-labs/flux-2-dev` |
 
 Capabilities:
 
@@ -293,10 +294,10 @@ Reproducible with `python eval.py` on the original 21 main + 12 surprise entitie
 | Fusion gain over best single | +0.096 |
 | Surprise hold-out recall@10 | 0.071 |
 
-Plus: **112 non-UI tests pass, 4 skipped** (84 original + 28 investigation tests; the four
-skipped tests are live Cloudflare integration tests enabled with
-`RUN_CLOUDFLARE_TESTS=1`). The PySide6 desktop tests require PySide6, which is not installed
-in the current environment. The live Cloudflare suite passes all four tests when enabled.
+Plus: **124 tests pass, 6 skipped** (including the PySide6 desktop tests and the
+investigation/agent-tool suite). The skipped tests include the four live Cloudflare
+integration tests, enabled with `RUN_CLOUDFLARE_TESTS=1`; those four pass when enabled.
+The chart QA script was run against the demo case with Cloudflare vision read-back.
 
 ---
 
@@ -325,13 +326,17 @@ src/aml/                        ONE package: analytics + case workspace
   i18n.py                       six locales, language detection, query lexicons
   data_generator/investigation_case.py  demo evidence + ground truth
 web/                            zero-dependency chat workspace
+main_app.py                     PySide6 desktop console + case-workspace entry point
+case_ui.py                      native case workspace page (chat, evidence, findings, leads, diary, report)
 run_pipeline.py                 analytics + `--investigation` case mode
 run_case.py                     case CLI
 ask.py                          interactive assistant wrapper
 run_web.py                      launch the web workspace
+scripts/chart_qa.py             generate every chart + Cloudflare vision read-back
 eval_investigation.py           investigation evaluation harness
 tests/test_investigation_*.py   investigation + agent-tool tests
 tests/test_cloudflare_integration.py  live Cloudflare tests (skipped by default)
+PROGRESS.md                     current build state, commands, and next steps
 INVESTIGATION_PLAN.md           migration plan, gap analysis, roadmap
 PLAN.md                         original analytics-core build record
 SCHEMA.md                       frozen analytics dataframe spec

@@ -19,8 +19,8 @@ investigation:
   # The vision model reads uploaded images; the text model polishes grounded
   # answers; the image model generates illustrations on request.
   llm_provider: "cloudflare"
-  llm_model: "@cf/meta/llama-3.2-11b-vision-instruct"
-  llm_text_model: "@cf/meta/llama-3.1-8b-instruct"
-  llm_image_model: "@cf/black-forest-labs/flux-1-schnell"
+  llm_model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+  llm_text_model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+  llm_image_model: "@cf/black-forest-labs/flux-2-dev"
   llm_base_url: ""
   llm_timeout: 120

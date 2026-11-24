@@ -24,7 +24,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+from matplotlib.text import Text
 from matplotlib.ticker import MaxNLocator
+from matplotlib.transforms import Bbox
 
 THEMES: Dict[str, Dict[str, str]] = {
     "dark": {
@@ -109,6 +111,32 @@ def _legend(ax, t: Dict[str, str], loc: str = "upper left") -> None:
     leg.get_frame().set_linewidth(0.8)
 
 
+def _headroom(ax, top: float = 1.18) -> None:
+    """Leave space above the tallest mark so peak callouts never clip."""
+    lo, hi = ax.get_ylim()
+    if hi > lo:
+        ax.set_ylim(lo, hi * top if hi > 0 else hi)
+
+
+def _legend_below(ax, t: Dict[str, str], ncol: int = 4) -> None:
+    leg = ax.legend(frameon=True, facecolor=t["bg_card"], edgecolor=t["border"],
+                    fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.16),
+                    ncol=ncol)
+    for txt in leg.get_texts():
+        txt.set_color(t["text"])
+    leg.get_frame().set_linewidth(0.8)
+
+
+def _boxes_overlap(a, b) -> bool:
+    return not (a[1] < b[0] or a[0] > b[1] or a[3] < b[2] or a[2] > b[3])
+
+
+def _box_hits_circle(box, cx: float, cy: float, radius: float) -> bool:
+    closest_x = min(max(cx, box[0]), box[1])
+    closest_y = min(max(cy, box[2]), box[3])
+    return math.hypot(cx - closest_x, cy - closest_y) < radius
+
+
 def _save(fig, path: Path) -> Path:
     fig.tight_layout()
     fig.savefig(path, bbox_inches="tight", facecolor=fig.get_facecolor(),
@@ -169,6 +197,7 @@ def render_timeline(result, out_dir: str | Path, name: str = "timeline.png",
     _mono_labels(ax, t)
     _legend(ax, t, loc="upper left")
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    _headroom(ax, 1.15)
 
     locator = mdates.AutoDateLocator(minticks=4, maxticks=10)
     ax.xaxis.set_major_locator(locator)
@@ -206,16 +235,35 @@ def render_model_scores(result, out_dir: str | Path, name: str = "models.png",
     peaks = [max(scores[m].values()) if scores[m] else 0.0 for m in models]
     flagged = [sum(1 for v in scores[m].values() if v > 0.6) for m in models]
     x = np.arange(len(models))
-    ax.bar(x - 0.19, peaks, 0.38, label="peak score", color=t["amber"], alpha=0.9)
-    ax.bar(x + 0.19, flagged, 0.38, label="flagged >0.6", color=t["red"], alpha=0.9)
+    ax.bar(x - 0.19, peaks, 0.38, color=t["amber"], alpha=0.9)
     ax.set_xticks(x, [m.replace("_", "\n") for m in models], fontsize=7)
-    ax.set_ylim(0, max(1.0, max(peaks + [0.0]) * 1.15))
+    ax.set_ylim(0, 1.10)
+    ax.set_ylabel("peak score", fontsize=8.5, family="monospace")
     _title(ax, t, "DETECTION ENGINES — peak score and flagged count")
     _apply(fig, ax, t)
     _style_axes_text(ax, t)
     _mono_labels(ax, t)
-    if x.size:
-        _legend(ax, t, loc="upper right")
+    # Flagged counts are integer totals, not scores; a second axis prevents
+    # them from being clipped above the 0-1 score scale.
+    ax2 = ax.twinx()
+    ax2.bar(x + 0.19, flagged, 0.38, color=t["red"], alpha=0.9)
+    ax2.set_ylim(0, max(flagged + [1]) * 1.30)
+    ax2.set_ylabel("flagged entities", fontsize=8.5, family="monospace",
+                   color=t["red"])
+    ax2.tick_params(axis="y", colors=t["red"], labelsize=8)
+    ax2.spines["right"].set_color(t["red"])
+    ax2.spines["right"].set_linewidth(0.8)
+    for side in ("top", "left", "bottom"):
+        ax2.spines[side].set_visible(False)
+    handles = [
+        mpatches.Patch(color=t["amber"], label="peak score (left)"),
+        mpatches.Patch(color=t["red"], label="flagged >0.6 (right)"),
+    ]
+    leg = ax.legend(handles=handles, frameon=True, facecolor=t["bg_card"],
+                    edgecolor=t["border"], fontsize=8, loc="upper right")
+    for txt in leg.get_texts():
+        txt.set_color(t["text"])
+    leg.get_frame().set_linewidth(0.8)
     return _save(fig, path)
 
 
@@ -242,9 +290,10 @@ def render_person_attention(result, out_dir: str | Path, name: str = "people.png
               for x in reversed(top)]
     y = np.arange(len(vals))
     ax.barh(y, vals, color=colors, alpha=0.92, height=0.62)
-    ax.set_yticks(y, [f"{lab}  ·  {nm}" for lab, nm in zip(labels, names)],
-                  fontsize=8)
-    ax.set_xlim(0, max(vals) * 1.22)
+    ax.set_yticks(y, [f"{lab}\n{nm}" for lab, nm in zip(labels, names)],
+                  fontsize=8.5)
+    ax.tick_params(axis="y", length=0, pad=4)
+    ax.set_xlim(0, max(vals) * 1.26)
     ax.set_xlabel("evidence factors", fontsize=8.5, family="monospace")
     _title(ax, t, "A CLOSER LOOK AT THE PEOPLE WHO STAND OUT")
     _apply(fig, ax, t)
@@ -255,6 +304,16 @@ def render_person_attention(result, out_dir: str | Path, name: str = "people.png
     for i, v in enumerate(vals):
         ax.text(v + 0.12, i, f"{v}", va="center", fontsize=7.5,
                 color=t["sub"], family="monospace")
+    risk_handles = [
+        mpatches.Patch(color=t["red"], label="HIGH risk"),
+        mpatches.Patch(color=t["yellow"], label="MEDIUM risk"),
+        mpatches.Patch(color=t["sky"], label="LOW risk"),
+    ]
+    leg = ax.legend(handles=risk_handles, frameon=True, facecolor=t["bg_card"],
+                    edgecolor=t["border"], fontsize=8, loc="lower right")
+    for txt in leg.get_texts():
+        txt.set_color(t["text"])
+    leg.get_frame().set_linewidth(0.8)
     return _save(fig, path)
 
 
@@ -275,14 +334,35 @@ def render_sources(result, out_dir: str | Path, name: str = "sources.png",
     rows = [rs.n_rows for rs in per_source]
     ents = [rs.n_entities for rs in per_source]
     x = np.arange(len(names))
-    ax.bar(x - 0.19, rows, 0.38, label="records", color=t["sky"], alpha=0.9)
-    ax.bar(x + 0.19, ents, 0.38, label="entities", color=t["green"], alpha=0.9)
+    ax.bar(x, rows, 0.52, label="records (left axis)", color=t["sky"], alpha=0.9)
     ax.set_xticks(x, names, fontsize=7.5)
     _title(ax, t, "WHERE THE RECORDS CAME FROM — ingestion volumes")
     _apply(fig, ax, t)
     _style_axes_text(ax, t)
     _mono_labels(ax, t)
-    _legend(ax, t, loc="upper right")
+    # Entities are typically 1-4 per file while records are thousands; a
+    # second axis keeps both readable instead of hiding the entity counts.
+    ax2 = ax.twinx()
+    # Markers only: files are categorical, so a connecting line would imply a
+    # trend between unrelated sources.
+    ax2.scatter(x, ents, color=t["green"], marker="o", s=42, zorder=5,
+                edgecolors=t["text"], linewidths=0.6)
+    ax2.set_ylabel("entities", fontsize=8.5, family="monospace",
+                   color=t["green"])
+    ax2.tick_params(axis="y", colors=t["green"], labelsize=8)
+    ax2.set_ylim(0, max(ents + [1]) * 1.45)
+    ax2.spines["right"].set_color(t["green"])
+    ax2.spines["right"].set_linewidth(0.8)
+    for side in ("top", "left", "bottom"):
+        ax2.spines[side].set_visible(False)
+    handles = [mpatches.Patch(color=t["sky"], label="records (left axis)"),
+               Line2D([0], [0], color=t["green"], marker="o", markersize=6,
+                      linewidth=0, label="entities (right axis)")]
+    leg = ax.legend(handles=handles, frameon=True, facecolor=t["bg_card"],
+                    edgecolor=t["border"], fontsize=8, loc="upper right")
+    for txt in leg.get_texts():
+        txt.set_color(t["text"])
+    leg.get_frame().set_linewidth(0.8)
     return _save(fig, path)
 
 
@@ -477,9 +557,10 @@ def render_correlation_graph(result, out_dir: str | Path, top_k: int = 12,
 
     n = G.number_of_nodes()
     # A spring layout with generous spacing keeps labels apart better than
-    # Kamada-Kawai on dense suspect graphs.
-    pos = nx.spring_layout(G, seed=42, k=2.9 / math.sqrt(max(n, 1)),
-                           iterations=600)
+    # Kamada-Kawai on dense suspect graphs.  The axes are fixed to [-1.35, 1.35]
+    # so labels always have room outside the node cluster.
+    pos = nx.spring_layout(G, seed=42, k=6.5 / math.sqrt(max(n, 1)),
+                           iterations=1400)
     xs = np.array([p[0] for p in pos.values()])
     ys = np.array([p[1] for p in pos.values()])
     xmin, xmax = float(xs.min()), float(xs.max())
@@ -487,91 +568,134 @@ def render_correlation_graph(result, out_dir: str | Path, top_k: int = 12,
     span = max(xmax - xmin, ymax - ymin, 1e-9)
     pos = {k: ((v[0] - xmin) / span * 2 - 1, (v[1] - ymin) / span * 2 - 1)
            for k, v in pos.items()}
+    ax.set_xlim(-1.36, 1.36)
+    ax.set_ylim(-1.36, 1.36)
+    ax.set_aspect("equal")
+
+    node_sizes: Dict[str, float] = {}
+    node_radii: Dict[str, float] = {}
+    for node in G.nodes():
+        info = G.nodes[node]
+        size = min(1700.0, 520.0 + 26.0 * math.sqrt(max(1, info.get("n_events", 1))))
+        node_sizes[node] = size
+        node_radii[node] = 0.105 if size >= 1000 else 0.085
 
     edge_items = sorted(G.edges(data=True), key=lambda e: -e[2].get("weight", 0))
-    label_budget = 22 if n > 10 else 18
-    placed_labels = []
+    # Dense suspect graphs have more meaningful edges than label-sized gaps.
+    # Label only the strongest links; the legend still explains every colour.
+    label_budget = 7 if n > 10 else 12
     for idx, (u, v, edge) in enumerate(edge_items):
         x1, y1 = pos[u]
         x2, y2 = pos[v]
         color, _ = _edge_style(edge, t)
         width = 1.15 + 0.75 * math.log1p(max(1, edge.get("weight", 1)))
         types = edge.get("types", set())
-        alpha = 0.45 if "shared_counterparty" in types else 0.72
+        alpha = 0.42 if "shared_counterparty" in types else 0.70
         ax.plot([x1, x2], [y1, y2], color=color, linewidth=width,
                 alpha=alpha, zorder=1, solid_capstyle="round")
-        weight = edge.get("weight", 1)
-        label_worthy = ("colocation" in types or "shared_location" in types
-                        or ("direct" in types and weight >= 2))
-        if idx < label_budget and label_worthy:
-            label = _edge_label(edge)
-            if label:
-                dx, dy = x2 - x1, y2 - y1
-                norm = math.hypot(dx, dy) or 1.0
-                ox, oy = -dy / norm * 0.045, dx / norm * 0.045
-                mx, my = (x1 + x2) / 2 + ox, (y1 + y2) / 2 + oy
-                if any(math.hypot(mx - px, my - py) < 0.16
-                       for px, py in placed_labels):
-                    continue
-                ax.annotate(
-                    label, xy=(mx, my),
-                    fontsize=8.0, family="monospace", color=color,
-                    ha="center", va="center", zorder=4,
-                    bbox=dict(boxstyle="round,pad=0.22", facecolor=t["bg_card"],
-                              edgecolor=color, alpha=0.92, linewidth=0.6),
-                )
-                placed_labels.append((mx, my))
 
-    label_boxes = []
+    # Numbered nodes plus a side register: a dense 12-suspect graph has no
+    # room for collision-free name boxes on the canvas.
+    node_order = sorted(
+        G.nodes(),
+        key=lambda nd: ({"HIGH": 0, "MEDIUM": 1, "LOW": 2}.get(
+            G.nodes[nd].get("risk", "LOW"), 3), -G.nodes[nd].get("n_events", 0)),
+    )
+    rank_of = {node: i + 1 for i, node in enumerate(node_order)}
     for node in G.nodes():
         x, y = pos[node]
         info = G.nodes[node]
         risk = info.get("risk", "LOW")
         color = t["red"] if risk == "HIGH" else (t["amber"] if risk == "MEDIUM" else t["sky"])
-        size = min(1700.0, 520.0 + 26.0 * math.sqrt(max(1, info.get("n_events", 1))))
+        size = node_sizes[node]
         ax.scatter([x], [y], s=size, color=color, alpha=0.96,
                    edgecolors=t["text"], linewidths=1.1, zorder=5)
         ax.scatter([x], [y], s=size * 1.32, facecolors="none",
                    edgecolors=color, linewidths=1.2, alpha=0.45, zorder=4)
-        name = str(info.get("name", node))
-        label = f"{name}\n{node}"
-        if y > 0.55:
-            candidates = [(18, -26), (-18, -26), (18, 18), (-18, 18),
-                          (0, -30), (0, 30)]
-        elif y < -0.55:
-            candidates = [(18, 18), (-18, 18), (18, -26), (-18, -26),
-                          (0, 30), (0, -30)]
-        else:
-            candidates = [(18, 18), (18, -26), (-18, 18), (-18, -26),
-                          (0, 24), (0, -24)]
-        w = 0.06 + 0.016 * max(len(name), len(node))
-        h = 0.13
-        chosen = candidates[0]
-        for dx, dy in candidates:
-            cx = x + dx * 0.0022
-            cy = y + dy * 0.0022
-            box = (cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2)
-            if not any(not (box[1] < b[0] or box[0] > b[1]
-                            or box[3] < b[2] or box[2] > b[3])
-                       for b in label_boxes):
-                chosen = (dx, dy)
-                label_boxes.append(box)
+        rank_color = "#0B1220" if (theme == "dark" and risk == "LOW") else "#FFFFFF"
+        ax.text(x, y, str(rank_of[node]), ha="center", va="center",
+                fontsize=8.8, fontweight="bold", color=rank_color, zorder=6)
+
+    # Edge labels are secondary: place only the strongest links, on either
+    # side of the edge, with generous collision padding.  It is better to omit
+    # a secondary label than to stack unreadable boxes in the graph centre.
+    placed_edge_labels = []
+    labelled_edges = 0
+    for idx, (u, v, edge) in enumerate(edge_items):
+        if labelled_edges >= label_budget:
+            break
+        types = edge.get("types", set())
+        weight = edge.get("weight", 1)
+        label_worthy = ("colocation" in types or "shared_location" in types
+                        or ("direct" in types and weight >= 2))
+        if not label_worthy:
+            continue
+        label = _edge_label(edge)
+        if not label:
+            continue
+        x1, y1 = pos[u]
+        x2, y2 = pos[v]
+        color, _ = _edge_style(edge, t)
+        dx, dy = x2 - x1, y2 - y1
+        norm = math.hypot(dx, dy) or 1.0
+        nxo, nyo = -dy / norm, dx / norm
+        w = 0.060 + 0.013 * len(label)
+        h = 0.100
+        placed = False
+        for side in (1, -1):
+            if placed:
                 break
-        else:
-            dx, dy = chosen
-            cx = x + dx * 0.0022
-            cy = y + dy * 0.0022
-            label_boxes.append((cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2))
-        dx, dy = chosen
-        ax.annotate(
-            label, xy=(x, y), xytext=(dx, dy),
-            textcoords="offset points", fontsize=10.5, fontweight="bold",
-            family="sans-serif", color=t["text"],
-            ha="left" if dx >= 0 else "right",
-            va="bottom" if dy >= 0 else "top", zorder=6,
-            bbox=dict(boxstyle="round,pad=0.32", facecolor=t["bg_card"],
-                      edgecolor=color, alpha=0.96, linewidth=0.9),
-        )
+            ox, oy = nxo * 0.065 * side, nyo * 0.065 * side
+            for frac in (0.50, 0.38, 0.62, 0.28, 0.72):
+                mx = x1 + dx * frac + ox
+                my = y1 + dy * frac + oy
+                box = (mx - w / 2, mx + w / 2, my - h / 2, my + h / 2)
+                if any(_box_hits_circle(box, pos[nd][0], pos[nd][1],
+                                        node_radii.get(nd, 0.09) + 0.030)
+                       for nd in G.nodes()):
+                    continue
+                if any(_boxes_overlap(box, b) for b in placed_edge_labels):
+                    continue
+                ax.text(
+                    mx, my, label, fontsize=7.4, family="monospace",
+                    color=color, ha="center", va="center", zorder=6,
+                    bbox=dict(boxstyle="round,pad=0.20", facecolor=t["bg_card"],
+                              edgecolor=color, alpha=0.96, linewidth=0.6),
+                )
+                placed_edge_labels.append(box)
+                labelled_edges += 1
+                placed = True
+                break
+
+    # ---- side register ---------------------------------------------------
+    panel = fig.add_axes([0.735, 0.12, 0.25, 0.74])
+    panel.set_facecolor(t["bg_fig"])
+    panel.set_xlim(0, 1)
+    panel.set_ylim(0, 1)
+    panel.set_xticks([])
+    panel.set_yticks([])
+    for spine in panel.spines.values():
+        spine.set_visible(False)
+    panel.text(0.0, 1.0, "PEOPLE IN THIS GRAPH", ha="left", va="top",
+               fontsize=9.0, fontweight="bold", color=t["title"],
+               family="monospace")
+    panel.text(0.0, 0.955, "numbered nodes · risk · events", ha="left", va="top",
+               fontsize=7.2, color=t["muted"], family="monospace")
+    row_step = 0.078
+    for i, node in enumerate(node_order):
+        info = G.nodes[node]
+        risk = info.get("risk", "LOW")
+        color = t["red"] if risk == "HIGH" else (t["amber"] if risk == "MEDIUM" else t["sky"])
+        y = 0.90 - i * row_step
+        panel.scatter([0.018], [y - 0.006], s=42, color=color,
+                      edgecolors=t["text"], linewidths=0.6, zorder=3)
+        panel.text(0.065, y, f"{rank_of[node]:02d}  {info.get('name', node)}",
+                   ha="left", va="center", fontsize=8.0, fontweight="bold",
+                   color=t["text"], family="sans-serif")
+        panel.text(0.065, y - 0.030,
+                   f"{node} · {risk} · {int(info.get('n_events', 0)):,} events",
+                   ha="left", va="center", fontsize=6.9, color=t["sub"],
+                   family="monospace")
 
     edge_handles = [
         Line2D([0], [0], color=t["amber"], lw=2.6, label="transfer"),
@@ -592,7 +716,7 @@ def render_correlation_graph(result, out_dir: str | Path, top_k: int = 12,
     legend = fig.legend(handles=edge_handles + node_handles, loc="lower center",
                         ncol=3, frameon=True, facecolor=t["bg_card"],
                         edgecolor=t["border"], fontsize=9.0,
-                        bbox_to_anchor=(0.5, 0.005))
+                        bbox_to_anchor=(0.36, 0.005))
     for txt in legend.get_texts():
         txt.set_color(t["text"])
         txt.set_family("monospace")
@@ -606,7 +730,8 @@ def render_correlation_graph(result, out_dir: str | Path, top_k: int = 12,
                  color=t["title"], y=0.985, family="sans-serif")
     fig.text(0.5, 0.945,
              "Connections found by the ensemble: direct events, call/post -> transfer "
-             "colocation, shared locations and shared counterparties",
+             "colocation, shared locations and shared counterparties · numbered nodes, "
+             "register at right · edge labels show the strongest links",
              ha="center", va="top", fontsize=9.5, color=t["sub"],
              family="sans-serif")
     components = list(nx.connected_components(G))
@@ -616,7 +741,7 @@ def render_correlation_graph(result, out_dir: str | Path, top_k: int = 12,
         ax.text(0.5, -0.055, "Disconnected groups (no connection found): " + " | ".join(names),
                 transform=ax.transAxes, ha="center", va="top", fontsize=8.5,
                 color=t["muted"], family="monospace")
-    fig.tight_layout(rect=(0, 0.07, 1, 0.90))
+    fig.subplots_adjust(left=0.03, right=0.70, bottom=0.10, top=0.90)
     fig.savefig(path, bbox_inches="tight", facecolor=fig.get_facecolor(), edgecolor="none")
     plt.close(fig)
     return path
@@ -671,8 +796,9 @@ def render_entity_timeline(result, out_dir: str | Path, entity_id: str,
     _style_axes_text(ax, t)
     ax.grid(axis="x", color=t["grid"], linewidth=0.6, alpha=0.45)
     _mono_labels(ax, t)
-    _legend(ax, t, loc="upper left")
+    _legend_below(ax, t, ncol=4)
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    _headroom(ax, 1.16)
 
     locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
     ax.xaxis.set_major_locator(locator)
@@ -851,6 +977,99 @@ def _stylized_map(ax, bbox, t: Dict[str, str]) -> None:
             color=t["muted"], family="monospace")
 
 
+def _place_map_labels(ax, fig, points, flagged, t: Dict[str, str],
+                      max_count: float, obstacles=None) -> int:
+    """Place map labels without clipping or overlapping other labels/markers.
+
+    Matplotlib has no built-in label de-confliction.  Candidate positions sit on
+    rings around each marker and are tried nearest-first, so labels use the
+    closest clear space and a leader line keeps them attached to their point.
+    Every candidate is measured with the renderer and kept only when it is
+    fully inside the axes and clear of the legend, the attribution, previously
+    placed labels and marker circles.  A first strict pass avoids every marker;
+    a relaxed pass may cover small unflagged markers but still never covers a
+    flagged marker or another label.  A missing label is better than an
+    unreadable pile of callouts.
+    """
+    if not flagged:
+        return 0
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    ax_box = ax.bbox
+    px_per_pt = fig.dpi / 72.0
+    fontsize = 7.9
+
+    def marker_circle(point):
+        size = 55 + 260 * (point["count"] / max_count)
+        px, py = ax.transData.transform((point["lon"], point["lat"]))
+        return px, py, math.sqrt(size) / 2.0 * px_per_pt + 1.0
+
+    def hits_circle(box, circle) -> bool:
+        cx, cy, radius = circle
+        nx = min(max(cx, box.x0), box.x1)
+        ny = min(max(cy, box.y0), box.y1)
+        return (nx - cx) ** 2 + (ny - cy) ** 2 < radius * radius
+
+    hard = list(obstacles or [])
+    hard_circles = [marker_circle(p) for p in points if p["flagged"]]
+    soft_circles = [marker_circle(p) for p in points if not p["flagged"]]
+
+    # Offsets are in points (1 pt ~ 2.36 px at 170 dpi).  Rings clear the
+    # largest marker bubble, then step outwards; cardinals keep text level.
+    candidates = []
+    for radius in (13, 22, 34, 48, 64):
+        diag = radius * 0.72
+        for dx, dy, ha, va in (
+            (radius, 0, "left", "center"), (-radius, 0, "right", "center"),
+            (0, radius, "center", "bottom"), (0, -radius, "center", "top"),
+            (diag, diag, "left", "bottom"), (-diag, diag, "right", "bottom"),
+            (diag, -diag, "left", "top"), (-diag, -diag, "right", "top"),
+        ):
+            candidates.append((dx, dy, ha, va))
+
+    placed = 0
+    for point in flagged:
+        label = f"{point['label']} ({point['count']:,})"
+        for relaxed in (False, True):
+            chosen = None
+            for dx, dy, ha, va in candidates:
+                text = ax.annotate(
+                    label, xy=(point["lon"], point["lat"]),
+                    xytext=(dx, dy), textcoords="offset points",
+                    fontsize=fontsize, family="monospace", fontweight="bold",
+                    color=t["red"], ha=ha, va=va, zorder=7,
+                    annotation_clip=False,
+                    bbox=dict(boxstyle="round,pad=0.22",
+                              facecolor=t["bg_card"], edgecolor=t["red"],
+                              alpha=0.96, linewidth=0.7),
+                    arrowprops=dict(arrowstyle="-", color=t["red"], lw=0.7,
+                                    alpha=0.7, shrinkA=1, shrinkB=2),
+                )
+                text.update_positions(renderer)
+                raw = Text.get_window_extent(text, renderer=renderer)
+                pad = 0.30 * fontsize * px_per_pt + 1.0
+                box = Bbox.from_extents(raw.x0 - pad, raw.y0 - pad,
+                                        raw.x1 + pad, raw.y1 + pad)
+                inside = (box.x0 >= ax_box.x0 + 8
+                          and box.x1 <= ax_box.x1 - 8
+                          and box.y0 >= ax_box.y0 + 8
+                          and box.y1 <= ax_box.y1 - 8)
+                blocked = (not inside
+                           or any(box.overlaps(other) for other in hard)
+                           or any(hits_circle(box, c) for c in hard_circles))
+                if not blocked and not relaxed:
+                    blocked = any(hits_circle(box, c) for c in soft_circles)
+                if not blocked:
+                    chosen = box
+                    break
+                text.remove()
+            if chosen is not None:
+                hard.append(chosen)
+                placed += 1
+                break
+    return placed
+
+
 def render_location_map(result, out_dir: str | Path, name: str = "map.png",
                         theme: str = "dark") -> Path:
     """Activity map with a real map background when online and a zoom inset."""
@@ -896,89 +1115,7 @@ def render_location_map(result, out_dir: str | Path, name: str = "map.png",
                    alpha=0.82, edgecolors=t["node_edge"], linewidths=0.7, zorder=3)
 
     flagged = sorted([p for p in points if p["flagged"]],
-                     key=lambda p: -p["count"])[:12]
-    placed = []
-    directions = [(12, 12), (-12, 12), (12, -14), (-12, -14),
-                  (0, 18), (0, -18), (18, 0), (-18, 0)]
-    for idx, point in enumerate(flagged):
-        px, py = point["lon"], point["lat"]
-        if any(math.hypot(px - ox, py - oy) < (lon_max - lon_min) * 0.10
-               for ox, oy in placed) and idx >= 5:
-            continue
-        dx, dy = directions[idx % len(directions)]
-        x_frac = (px - lon_min) / max(1e-9, lon_max - lon_min)
-        y_frac = (py - lat_min) / max(1e-9, lat_max - lat_min)
-        if x_frac > 0.82:
-            dx, ha = -abs(dx), "right"
-        elif x_frac < 0.18:
-            dx, ha = abs(dx), "left"
-        else:
-            ha = "left" if dx >= 0 else "right"
-        if y_frac > 0.82:
-            dy, va = -abs(dy), "top"
-        elif y_frac < 0.18:
-            dy, va = abs(dy), "bottom"
-        else:
-            va = "bottom" if dy >= 0 else "top"
-        label = f"{point['label']} ({point['count']:,})"
-        ax.annotate(
-            label, xy=(px, py), xytext=(dx, dy), textcoords="offset points",
-            fontsize=9.3, family="monospace", fontweight="bold",
-            color=t["red"], ha=ha, va=va, zorder=7, annotation_clip=False,
-            bbox=dict(boxstyle="round,pad=0.28", facecolor=t["bg_card"],
-                      edgecolor=t["red"], alpha=0.94, linewidth=0.8),
-            arrowprops=dict(arrowstyle="-", color=t["red"], lw=0.8, alpha=0.75),
-        )
-        placed.append((px, py))
-
-    if len(points) >= 5:
-        anchor = max(points, key=lambda p: p["count"])
-        cluster = [
-            p for p in points
-            if abs(p["lat"] - anchor["lat"]) < (lat_max - lat_min) * 0.32
-            and abs(p["lon"] - anchor["lon"]) < (lon_max - lon_min) * 0.32
-        ]
-        if len(cluster) >= 3:
-            axins = ax.inset_axes([0.70, 0.02, 0.27, 0.28])
-            if mosaic is not None and extent is not None:
-                axins.imshow(mosaic, extent=extent, aspect="auto", alpha=0.92)
-            else:
-                axins.set_facecolor(t["bg_ax"])
-                axins.grid(color=t["grid"], linewidth=0.5, alpha=0.5)
-            for point in cluster:
-                axins.scatter(point["lon"], point["lat"],
-                              s=36 + 160 * (point["count"] / max_count),
-                              color=t["red"] if point["flagged"] else t["amber"],
-                              alpha=0.85, edgecolors=t["node_edge"], linewidths=0.5)
-            cx = [p["lon"] for p in cluster]
-            cy = [p["lat"] for p in cluster]
-            axins.set_xlim(min(cx) - (lon_max - lon_min) * 0.05,
-                           max(cx) + (lon_max - lon_min) * 0.05)
-            axins.set_ylim(min(cy) - (lat_max - lat_min) * 0.05,
-                           max(cy) + (lat_max - lat_min) * 0.05)
-            axins.set_xticks([])
-            axins.set_yticks([])
-            axins.text(0.02, 0.98, "zoom - densest cluster",
-                       transform=axins.transAxes, ha="left", va="top",
-                       fontsize=8.2, color=t["text"], family="monospace",
-                       bbox=dict(boxstyle="round,pad=0.2", facecolor=t["bg_card"],
-                                 edgecolor=t["amber"], alpha=0.9, linewidth=0.6))
-            for spine in axins.spines.values():
-                spine.set_color(t["amber"])
-                spine.set_linewidth(0.8)
-            ax.indicate_inset_zoom(axins, edgecolor=t["amber"], alpha=0.8)
-
-    ax.set_xlabel("longitude", fontsize=9.5, family="monospace")
-    ax.set_ylabel("latitude", fontsize=9.5, family="monospace")
-    ax.tick_params(labelsize=8.5)
-    fig.suptitle("ACTIVITY MAP - locations & tower telemetry", fontsize=15.0,
-                 fontweight="bold", color=t["title"], y=0.985,
-                 family="sans-serif")
-    fig.text(0.5, 0.945,
-             "OpenStreetMap background when online | synthetic projection otherwise | "
-             "scroll/drag to zoom in report.html",
-             ha="center", va="top", fontsize=8.8, color=t["sub"],
-             family="sans-serif")
+                     key=lambda p: -p["count"])[:10]
 
     handles = [
         Line2D([0], [0], marker="o", color="none", markerfacecolor=t["amber"],
@@ -992,10 +1129,95 @@ def render_location_map(result, out_dir: str | Path, name: str = "map.png",
         txt.set_color(t["text"])
         txt.set_family("monospace")
     leg.get_frame().set_linewidth(0.8)
-    ax.text(0.005, 0.008, attribution, transform=ax.transAxes,
-            ha="left", va="bottom", fontsize=7.6, color=t["muted"],
-            family="monospace")
-    fig.tight_layout(rect=(0, 0, 1, 0.90))
+    attribution_text = ax.text(
+        0.005, 0.008, attribution, transform=ax.transAxes,
+        ha="left", va="bottom", fontsize=7.6, color=t["muted"],
+        family="monospace")
+
+    inset_used = False
+    if len(points) >= 5:
+        anchor = max(points, key=lambda p: p["count"])
+        cluster = [
+            p for p in points
+            if abs(p["lat"] - anchor["lat"]) < (lat_max - lat_min) * 0.32
+            and abs(p["lon"] - anchor["lon"]) < (lon_max - lon_min) * 0.32
+        ]
+        if len(cluster) >= 3:
+            cx = [p["lon"] for p in cluster]
+            cy = [p["lat"] for p in cluster]
+            x0 = min(cx) - (lon_max - lon_min) * 0.06
+            x1 = max(cx) + (lon_max - lon_min) * 0.06
+            y0 = min(cy) - (lat_max - lat_min) * 0.06
+            y1 = max(cy) + (lat_max - lat_min) * 0.06
+            # Dedicated panel outside the map: no label/inset collisions.
+            fig.subplots_adjust(left=0.06, right=0.60, bottom=0.10, top=0.86)
+            axins = fig.add_axes([0.655, 0.30, 0.30, 0.31])
+            if mosaic is not None and extent is not None:
+                axins.imshow(mosaic, extent=extent, aspect="auto", alpha=0.92)
+            else:
+                axins.set_facecolor(t["bg_ax"])
+                axins.grid(color=t["grid"], linewidth=0.5, alpha=0.5)
+            for point in cluster:
+                axins.scatter(point["lon"], point["lat"],
+                              s=36 + 160 * (point["count"] / max_count),
+                              color=t["red"] if point["flagged"] else t["amber"],
+                              alpha=0.85, edgecolors=t["node_edge"], linewidths=0.5)
+            axins.set_xlim(x0, x1)
+            axins.set_ylim(y0, y1)
+            axins.set_xticks([])
+            axins.set_yticks([])
+            axins.set_title("DENSEST CLUSTER — ZOOM", fontsize=8.5,
+                            color=t["title"], loc="left", pad=5,
+                            family="monospace", fontweight="bold")
+            for spine in axins.spines.values():
+                spine.set_color(t["amber"])
+                spine.set_linewidth(0.9)
+            ax.add_patch(mpatches.Rectangle(
+                (x0, y0), x1 - x0, y1 - y0, fill=False, edgecolor=t["amber"],
+                linewidth=1.1, linestyle="--", alpha=0.9, zorder=9,
+            ))
+            ax.annotate("zoom", xy=(x0, y1), xytext=(4, 4),
+                        textcoords="offset points", fontsize=7.6,
+                        family="monospace", color=t["amber"], zorder=10)
+            inset_used = True
+
+    if not inset_used:
+        fig.tight_layout(rect=(0, 0, 1, 0.90))
+
+    # Place labels only after the axes geometry is final.
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    # The dashed zoom locator is a guide, not an obstacle: blocking its whole
+    # area would suppress every label in the densest part of the map.
+    obstacles = []
+    for artist in (leg, attribution_text):
+        try:
+            box = artist.get_window_extent(renderer=renderer)
+            obstacles.append(Bbox.from_extents(
+                box.x0 - 3, box.y0 - 3, box.x1 + 3, box.y1 + 3))
+        except Exception:
+            pass
+    labelled = _place_map_labels(ax, fig, points, flagged, t, max_count,
+                                 obstacles=obstacles)
+    if labelled < len(flagged):
+        fig.text(0.5, 0.912,
+                 f"{len(flagged) - labelled} of {len(flagged)} flagged "
+                 "locations unlabelled (too dense to place)",
+                 ha="center", va="center", fontsize=7.6, color=t["muted"],
+                 family="monospace")
+
+    ax.set_xlabel("longitude", fontsize=9.5, family="monospace")
+    ax.set_ylabel("latitude", fontsize=9.5, family="monospace")
+    ax.tick_params(labelsize=8.5)
+    fig.suptitle("ACTIVITY MAP - locations & tower telemetry", fontsize=15.0,
+                 fontweight="bold", color=t["title"], y=0.985,
+                 family="sans-serif")
+    fig.text(0.5, 0.945,
+             "OpenStreetMap background when online | synthetic projection otherwise | "
+             "scroll/drag to zoom in report.html",
+             ha="center", va="top", fontsize=8.8, color=t["sub"],
+             family="sans-serif")
+
     fig.savefig(path, bbox_inches="tight", facecolor=fig.get_facecolor(),
                 edgecolor="none")
     plt.close(fig)
